@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,10 +151,10 @@ function extensionPackagePreviewPlugin(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
+  base: "./",
   plugins: [
     react(),
     tailwindcss(),
-    viteSingleFile(),
     command === "serve" ? extensionPackagePreviewPlugin() : undefined,
   ].filter(Boolean),
   server: {
