@@ -39,6 +39,7 @@ function extensionPackagePreviewPlugin(): Plugin {
       relative.startsWith(".git/") ||
       relative === ".pkg-tmp" ||
       relative.startsWith(".pkg-tmp/") ||
+      relative === EXTENSION_ZIP ||
       relative === `public/${EXTENSION_ZIP}`
     );
   };
@@ -166,6 +167,7 @@ export default defineConfig(({ command }) => ({
         "**/.pkg-tmp/**",
         "**/dist",
         "**/dist/**",
+        `**/${EXTENSION_ZIP}`,
         `**/public/${EXTENSION_ZIP}`,
       ],
     },

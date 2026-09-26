@@ -17,6 +17,7 @@ const tmpDir = path.join(rootDir, ".pkg-tmp");
 const packageDirName = "persian-notes-extension";
 const packageDir = path.join(tmpDir, packageDirName);
 const zipName = "persian-notes-extension.zip";
+const rootZip = path.join(rootDir, zipName);
 const publicZip = path.join(publicDir, zipName);
 const distZip = path.join(distDir, zipName);
 const tempZip = path.join(tmpDir, zipName);
@@ -58,12 +59,14 @@ try {
     throw new Error(`zip exited with code ${zipResult.status ?? "unknown"}`);
   }
 
+  copyFileSync(tempZip, rootZip);
   copyFileSync(tempZip, publicZip);
   copyFileSync(tempZip, distZip);
 
   console.log(
-    `✓ extension package updated → public/${zipName} (${formatBytes(statSync(publicZip).size)})`
+    `✓ extension package updated → ${zipName} (${formatBytes(statSync(rootZip).size)})`
   );
+  console.log(`✓ preview download copy → public/${zipName}`);
   console.log(`✓ downloadable build copy → dist/${zipName}`);
 } finally {
   rmSync(tmpDir, { recursive: true, force: true });

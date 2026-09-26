@@ -29,12 +29,17 @@ interface Props {
   onAdd: () => void;
   onToggleTheme: () => void;
   onHelp: () => void;
-  onDownloadExtension: () => void;
   onCopySeparate: () => void;
   onCopyCombined: () => void;
   onDeleteSelected: () => void;
   onClearSelection: () => void;
 }
+
+const EXTENSION_PACKAGE_NAME = "persian-notes-extension.zip";
+
+const withDownloadCacheBust = (event: React.MouseEvent<HTMLAnchorElement>) => {
+  event.currentTarget.href = `${EXTENSION_PACKAGE_NAME}?v=${Date.now()}`;
+};
 
 const Divider = () => (
   <div className="w-px h-6 mx-1 shrink-0" style={{ background: "var(--border)" }} />
@@ -120,12 +125,15 @@ export default function Toolbar(p: Props) {
         <TButton title="راهنما و نصب افزونه" onClick={p.onHelp}>
           <HelpCircle size={16} />
         </TButton>
-        <TButton
+        <a
+          href={EXTENSION_PACKAGE_NAME}
+          download={EXTENSION_PACKAGE_NAME}
+          onClick={withDownloadCacheBust}
           title="دانلود آخرین فایل نصبی افزونه‌ی کروم"
-          onClick={p.onDownloadExtension}
+          className="icon-btn w-9 h-9"
         >
           <Download size={16} />
-        </TButton>
+        </a>
 
         {/* selection actions */}
         <AnimatePresence>

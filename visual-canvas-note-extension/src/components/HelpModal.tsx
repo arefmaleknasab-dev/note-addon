@@ -16,8 +16,13 @@ import {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onDownloadExtension: () => void;
 }
+
+const EXTENSION_PACKAGE_NAME = "persian-notes-extension.zip";
+
+const withDownloadCacheBust = (event: React.MouseEvent<HTMLAnchorElement>) => {
+  event.currentTarget.href = `${EXTENSION_PACKAGE_NAME}?v=${Date.now()}`;
+};
 
 const steps = [
   { icon: Download, text: "فایل به‌روز «persian-notes-extension.zip» را از دکمه‌ی دانلود در نوار ابزار دریافت کن." },
@@ -39,7 +44,7 @@ const shortcuts: { keys: string[]; label: string }[] = [
   { keys: ["Esc"], label: "لغو انتخاب / بستن منوها" },
 ];
 
-export default function HelpModal({ open, onClose, onDownloadExtension }: Props) {
+export default function HelpModal({ open, onClose }: Props) {
   return (
     <AnimatePresence>
       {open && (
@@ -103,17 +108,19 @@ export default function HelpModal({ open, onClose, onDownloadExtension }: Props)
                     </li>
                   ))}
                 </ol>
-                <button
-                  type="button"
-                  onClick={onDownloadExtension}
+                <a
+                  href={EXTENSION_PACKAGE_NAME}
+                  download={EXTENSION_PACKAGE_NAME}
+                  onClick={withDownloadCacheBust}
                   className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-bold text-[#1a1206] transition-transform hover:scale-[1.03] active:scale-95"
                   style={{ background: "linear-gradient(135deg,#f5a623,#e2761b)" }}
                 >
                   <Download size={15} /> دانلود آخرین فایل نصبی افزونه
-                </button>
+                </a>
                 <p className="mt-3 text-[11.5px] leading-6" style={{ color: "var(--text-dim)" }}>
                   در حالت پیش‌نمایش، بعد از هر تغییر پروژه فایل نصبی به‌صورت خودکار دوباره ساخته می‌شود؛
-                  دکمه‌ی دانلود همیشه آخرین نسخه را می‌دهد.
+                  دکمه‌ی دانلود همیشه آخرین نسخه را می‌دهد. برای اطمینان، یک نسخه‌ی به‌روز از همین فایل در
+                  ریشه‌ی پوشه‌ی پروژه هم ساخته می‌شود تا از GitHub هم قابل دریافت باشد.
                 </p>
               </section>
 

@@ -539,7 +539,10 @@ export default function App() {
     a.href = `${EXTENSION_PACKAGE_NAME}?v=${Date.now()}`;
     a.download = EXTENSION_PACKAGE_NAME;
     a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
+    a.remove();
   }, []);
 
   const openCanvasMenu = useCallback(
@@ -708,7 +711,6 @@ export default function App() {
         onAdd={() => addNoteAt()}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onHelp={() => setHelpOpen(true)}
-        onDownloadExtension={downloadExtension}
         onCopySeparate={copySeparate}
         onCopyCombined={copyAll}
         onDeleteSelected={() => deleteIds([...selected])}
@@ -752,11 +754,7 @@ export default function App() {
       </AnimatePresence>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
-      <HelpModal
-        open={helpOpen}
-        onClose={() => setHelpOpen(false)}
-        onDownloadExtension={downloadExtension}
-      />
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastStack toasts={toasts} />
       <div className="noise-overlay" />
     </div>

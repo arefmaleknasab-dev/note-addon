@@ -2,4 +2,4 @@
 # ساخت و به‌روزرسانی فایل ZIP نصبی افزونه‌ی کروم
 set -euo pipefail
 
-npm run package:extension
+npm run build

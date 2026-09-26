@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && npm run package:extension:dist",
+    "build": "vite build && npm run package:extension",
     "build:app": "vite build",
-    "package:extension": "npm run build",
-    "package:extension:dist": "node scripts/package-extension.mjs",
+    "package:extension": "node scripts/package-extension.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
