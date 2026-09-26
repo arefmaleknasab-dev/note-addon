@@ -1,18 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Clipboard,
   ClipboardCopy,
+  ClipboardPaste,
   Copy,
   CopyPlus,
+  ExternalLink,
+  FilePlus,
   Hand,
-  LayoutGrid,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
+  Link,
+  List,
+  ListChecks,
+  ListOrdered,
   LoaderCircle,
   Maximize,
+  Minus,
   Moon,
   MousePointer2,
+  Pilcrow,
   Plus,
+  Quote,
   RotateCcw,
+  Scissors,
   Sun,
+  TextCursorInput,
   Trash2,
 } from "lucide-react";
 import NoteCard from "./components/NoteCard";
@@ -20,7 +38,7 @@ import ContextMenu, { type MenuRow } from "./components/ContextMenu";
 import Toolbar from "./components/Toolbar";
 import EmptyState from "./components/EmptyState";
 import { ToastStack, useToasts } from "./components/Toasts";
-import type { Note, Theme, ViewState } from "./types";
+import type { ConnectionSide, Note, NoteConnection, Theme, ViewState } from "./types";
 import {
   clearPendingNotes,
   getPendingNotes,
@@ -34,6 +52,7 @@ import {
 import { copyCombined, copySeparately, copySingle } from "./lib/clipboard";
 import {
   createNote,
+  DEFAULT_NOTE_H,
   DEFAULT_NOTE_W,
   noteFromPending,
   seedNotes,
@@ -56,8 +75,69 @@ type Gesture =
     }
   | null;
 
+type Point = { x: number; y: number };
+type Endpoint = { noteId: string; side: ConnectionSide };
+type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null };
+type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point };
+
+const sideVector = (side: ConnectionSide): Point => {
+  switch (side) {
+    case "top":
+      return { x: 0, y: -1 };
+    case "right":
+      return { x: 1, y: 0 };
+    case "bottom":
+      return { x: 0, y: 1 };
+    case "left":
+      return { x: -1, y: 0 };
+  }
+};
+
+const oppositeSide = (side: ConnectionSide): ConnectionSide => {
+  switch (side) {
+    case "top":
+      return "bottom";
+    case "bottom":
+      return "top";
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+  }
+};
+
+const noteSize = (n: Note) => ({ width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H });
+
+const sidePoint = (n: Note, side: ConnectionSide): Point => {
+  const { width, height } = noteSize(n);
+  switch (side) {
+    case "top":
+      return { x: n.x + width / 2, y: n.y };
+    case "right":
+      return { x: n.x + width, y: n.y + height / 2 };
+    case "bottom":
+      return { x: n.x + width / 2, y: n.y + height };
+    case "left":
+      return { x: n.x, y: n.y + height / 2 };
+  }
+};
+
+const connectionPath = (from: Point, fromSide: ConnectionSide, to: Point, toSide: ConnectionSide) => {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const curve = Math.max(70, Math.min(220, Math.hypot(dx, dy) * 0.42));
+  const fv = sideVector(fromSide);
+  const tv = sideVector(toSide);
+  const c1 = { x: from.x + fv.x * curve, y: from.y + fv.y * curve };
+  const c2 = { x: to.x + tv.x * curve, y: to.y + tv.y * curve };
+  return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`;
+};
+
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [connections, setConnections] = useState<NoteConnection[]>([]);
+  const [draftConnection, setDraftConnection] = useState<DraftConnection | null>(null);
+  const [connectionPrompt, setConnectionPrompt] = useState<ConnectionPrompt | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>("dark"); // dark by default
   const [loaded, setLoaded] = useState(false);
@@ -71,6 +151,7 @@ export default function App() {
 
   const viewRef = useRef<ViewState>({ x: 0, y: 0, zoom: 1 });
   const notesRef = useRef<Note[]>([]);
+  const connectionsRef = useRef<NoteConnection[]>([]);
   const themeRef = useRef<Theme>("dark");
   const canvasRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -81,6 +162,7 @@ export default function App() {
   const saveTimer = useRef<number | undefined>(undefined);
 
   notesRef.current = notes;
+  connectionsRef.current = connections;
   themeRef.current = theme;
 
   /* ------------------------------ view ------------------------------ */
@@ -98,15 +180,18 @@ export default function App() {
   const persistSoon = useCallback(() => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      saveState({ notes: notesRef.current, view: viewRef.current, theme: themeRef.current }).catch(
-        () => {}
-      );
+      saveState({
+        notes: notesRef.current,
+        connections: connectionsRef.current,
+        view: viewRef.current,
+        theme: themeRef.current,
+      }).catch(() => {});
     }, 550);
   }, []);
 
   useEffect(() => {
     if (loaded) persistSoon();
-  }, [notes, theme, loaded, persistSoon]);
+  }, [notes, connections, theme, loaded, persistSoon]);
 
   const zoomAt = useCallback(
     (cx: number, cy: number, factor: number) => {
@@ -137,10 +222,11 @@ export default function App() {
       maxX = -Infinity,
       maxY = -Infinity;
     for (const n of list) {
-      const h = noteEls.current.get(n.id)?.offsetHeight ?? 200;
+      const h = n.height ?? DEFAULT_NOTE_H;
+      const w = n.width ?? DEFAULT_NOTE_W;
       minX = Math.min(minX, n.x);
       minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.width);
+      maxX = Math.max(maxX, n.x + w);
       maxY = Math.max(maxY, n.y + h);
     }
     const pad = 100;
@@ -186,7 +272,8 @@ export default function App() {
       const s = await loadState().catch(() => undefined);
       if (!alive) return;
       if (s?.notes) {
-        setNotes(s.notes);
+        setNotes(s.notes.map((n) => ({ ...n, width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H })));
+        setConnections(s.connections ?? []);
         setTheme(s.theme ?? "dark");
         if (s.view) viewRef.current = s.view;
       } else if (!(await getSeedFlag())) {
@@ -235,6 +322,9 @@ export default function App() {
     (ids: string[]) => {
       if (!ids.length) return;
       setNotes((prev) => prev.filter((n) => !ids.includes(n.id)));
+      setConnections((prev) =>
+        prev.filter((c) => !ids.includes(c.from.noteId) && !ids.includes(c.to.noteId))
+      );
       setSelected((prev) => {
         const s = new Set(prev);
         ids.forEach((id) => s.delete(id));
@@ -277,6 +367,21 @@ export default function App() {
     },
     [push]
   );
+
+  const addConnection = useCallback((from: Endpoint, to: Endpoint) => {
+    if (from.noteId === to.noteId) return;
+    setConnections((prev) => {
+      const exists = prev.some(
+        (c) =>
+          c.from.noteId === from.noteId &&
+          c.from.side === from.side &&
+          c.to.noteId === to.noteId &&
+          c.to.side === to.side
+      );
+      if (exists) return prev;
+      return [...prev, { id: uid(), from, to }];
+    });
+  }, []);
 
   const selectedNotes = useCallback(
     () => notesRef.current.filter((n) => selected.has(n.id)),
@@ -324,8 +429,7 @@ export default function App() {
     if (items.length < 2) return;
     const cols = Math.ceil(Math.sqrt(items.length));
     const cellW = Math.max(...items.map((n) => n.width)) + 42;
-    const cellH =
-      Math.max(...items.map((n) => noteEls.current.get(n.id)?.offsetHeight ?? 220)) + 42;
+    const cellH = Math.max(...items.map((n) => n.height ?? DEFAULT_NOTE_H)) + 42;
     const x0 = Math.min(...items.map((n) => n.x));
     const y0 = Math.min(...items.map((n) => n.y));
     const pos = new Map<string, { x: number; y: number }>();
@@ -341,6 +445,108 @@ export default function App() {
     if (el) noteEls.current.set(id, el);
     else noteEls.current.delete(id);
   }, []);
+
+  const worldPointFromScreen = useCallback((clientX: number, clientY: number): Point => {
+    const v = viewRef.current;
+    return { x: (clientX - v.x) / v.zoom, y: (clientY - v.y) / v.zoom };
+  }, []);
+
+  const endpointPoint = useCallback((endpoint: Endpoint): Point | null => {
+    const note = notesRef.current.find((n) => n.id === endpoint.noteId);
+    return note ? sidePoint(note, endpoint.side) : null;
+  }, []);
+
+  const nearestConnector = useCallback(
+    (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
+      const v = viewRef.current;
+      let best: { endpoint: Endpoint; d: number } | null = null;
+      for (const note of notesRef.current) {
+        if (note.id === excludeId) continue;
+        for (const side of ["top", "right", "bottom", "left"] as ConnectionSide[]) {
+          const p = sidePoint(note, side);
+          const sx = p.x * v.zoom + v.x;
+          const sy = p.y * v.zoom + v.y;
+          const d = Math.hypot(sx - clientX, sy - clientY);
+          if (d < 34 && (!best || d < best.d)) best = { endpoint: { noteId: note.id, side }, d };
+        }
+      }
+      return best?.endpoint ?? null;
+    },
+    []
+  );
+
+  const onConnectorDragStart = useCallback(
+    (e: React.PointerEvent, id: string, side: ConnectionSide) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+      setConnectionPrompt(null);
+      const from = { noteId: id, side };
+      const start = sidePoint(notesRef.current.find((n) => n.id === id)!, side);
+      const move = (ev: PointerEvent) => {
+        const target = nearestConnector(ev.clientX, ev.clientY, id);
+        const targetPoint = target ? endpointPoint(target) : null;
+        setDraftConnection({ from, target, to: targetPoint ?? worldPointFromScreen(ev.clientX, ev.clientY) });
+      };
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        const target = nearestConnector(ev.clientX, ev.clientY, id);
+        const targetPoint = target ? endpointPoint(target) : null;
+        setDraftConnection(null);
+        if (target && targetPoint) {
+          addConnection(from, target);
+          push("success", "اتصال یادداشت‌ها ساخته شد");
+          return;
+        }
+        const to = worldPointFromScreen(ev.clientX, ev.clientY);
+        setConnectionPrompt({
+          x: clamp(ev.clientX, 12, window.innerWidth - 190),
+          y: clamp(ev.clientY, 12, window.innerHeight - 64),
+          from,
+          to,
+        });
+      };
+      setDraftConnection({ from, to: start, target: null });
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [addConnection, endpointPoint, nearestConnector, push, worldPointFromScreen]
+  );
+
+  const addConnectedNoteFromPrompt = useCallback(() => {
+    const prompt = connectionPrompt;
+    if (!prompt) return;
+    const newSide = oppositeSide(prompt.from.side);
+    const id = uid();
+    const w = DEFAULT_NOTE_W;
+    const h = DEFAULT_NOTE_H;
+    let x = prompt.to.x - w / 2;
+    let y = prompt.to.y - h / 2;
+    if (newSide === "top") {
+      x = prompt.to.x - w / 2;
+      y = prompt.to.y;
+    } else if (newSide === "right") {
+      x = prompt.to.x - w;
+      y = prompt.to.y - h / 2;
+    } else if (newSide === "bottom") {
+      x = prompt.to.x - w / 2;
+      y = prompt.to.y - h;
+    } else if (newSide === "left") {
+      x = prompt.to.x;
+      y = prompt.to.y - h / 2;
+    }
+    const note = createNote({ id, x: Math.round(x), y: Math.round(y), color: "violet" });
+    setNotes((prev) => [...prev, note]);
+    addConnection(prompt.from, { noteId: id, side: newSide });
+    setSelected(new Set([id]));
+    setAutoFocusId(id);
+    setRecentId(id);
+    setConnectionPrompt(null);
+    window.setTimeout(() => setAutoFocusId(null), 1600);
+    window.setTimeout(() => setRecentId(null), 2600);
+  }, [addConnection, connectionPrompt]);
 
   const onNoteDragStart = useCallback(
     (e: React.PointerEvent, id: string) => {
@@ -379,6 +585,7 @@ export default function App() {
       if ((e.target as HTMLElement).closest("input, textarea, a, button")) return;
       if ((e.target as HTMLElement).closest("[data-ui]")) return;
       setMenu(null);
+      setConnectionPrompt(null);
       const v = viewRef.current;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (e.button === 2 || e.pointerType === "touch") {
@@ -432,11 +639,11 @@ export default function App() {
       }
       const hits: string[] = [];
       for (const n of notesRef.current) {
-        const h = noteEls.current.get(n.id)?.offsetHeight ?? 200;
+        const { width, height } = noteSize(n);
         const sx = n.x * v.zoom + v.x;
         const sy = n.y * v.zoom + v.y;
-        const sw = n.width * v.zoom;
-        const sh = h * v.zoom;
+        const sw = width * v.zoom;
+        const sh = height * v.zoom;
         if (sx < rect.x2 && sx + sw > rect.x1 && sy < rect.y2 && sy + sh > rect.y1) hits.push(n.id);
       }
       setSelected(new Set([...g.base, ...hits]));
@@ -525,6 +732,156 @@ export default function App() {
     x: clamp(x, 8, window.innerWidth - 248),
     y: clamp(y, 8, window.innerHeight - estH - 12),
   });
+
+  const openEditorMenu = useCallback(
+    (
+      e: React.MouseEvent<HTMLInputElement | HTMLTextAreaElement>,
+      id: string,
+      field: "title" | "text"
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = e.currentTarget;
+      const hasSelection = el.selectionStart !== el.selectionEnd;
+
+      const applyValue = (next: string, start: number, end = start) => {
+        updateNote(id, { [field]: next } as Partial<Note>);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(start, end);
+        });
+      };
+
+      const replaceSelection = (text: string, selectStart?: number, selectEnd?: number) => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const next = el.value.slice(0, start) + text + el.value.slice(end);
+        applyValue(next, selectStart ?? start + text.length, selectEnd ?? start + text.length);
+      };
+
+      const wrapSelection = (before: string, after = before, placeholder = "متن") => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const selectedText = el.value.slice(start, end) || placeholder;
+        const inserted = `${before}${selectedText}${after}`;
+        replaceSelection(inserted, start + before.length, start + before.length + selectedText.length);
+      };
+
+      const transformSelectedLines = (transform: (line: string, i: number) => string) => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const lineStart = el.value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+        const foundEnd = el.value.indexOf("\n", end);
+        const lineEnd = foundEnd === -1 ? el.value.length : foundEnd;
+        const selectedText = el.value.slice(lineStart, lineEnd) || el.value.slice(start, end) || "";
+        const transformed = selectedText.split("\n").map(transform).join("\n");
+        const next = el.value.slice(0, lineStart) + transformed + el.value.slice(lineEnd);
+        applyValue(next, lineStart, lineStart + transformed.length);
+      };
+
+      const removeLineMarkers = (line: string) =>
+        line.replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|-\s+\[[ xX]\]\s+|>\s+)/, "");
+
+      const copySelected = async () => {
+        if (!hasSelection) return;
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        await navigator.clipboard.writeText(el.value.slice(start, end));
+        push("success", "متن کپی شد");
+      };
+
+      const cutSelected = async () => {
+        if (!hasSelection) return;
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        await navigator.clipboard.writeText(el.value.slice(start, end));
+        applyValue(el.value.slice(0, start) + el.value.slice(end), start);
+        push("success", "متن بریده شد");
+      };
+
+      const pasteText = async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) replaceSelection(text);
+        } catch {
+          push("error", "دسترسی خواندن کلیپ‌بورد داده نشد");
+        }
+      };
+
+      const insertLink = (external = false) => {
+        const url = window.prompt(external ? "آدرس پیوند بیرونی:" : "آدرس پیوند:", "https://");
+        if (!url) return;
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const label = el.value.slice(start, end) || (external ? "پیوند بیرونی" : "پیوند");
+        replaceSelection(`[${label}](${url})`, start + 1, start + 1 + label.length);
+      };
+
+      const attachFile = () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.onchange = () => {
+          const files = Array.from(input.files ?? []);
+          if (!files.length) return;
+          replaceSelection(files.map((f) => `📎 ${f.name}`).join("\n"));
+        };
+        input.click();
+      };
+
+      const rows: MenuRow[] = [
+        { icon: Link, label: "افزودن پیوند", onClick: () => insertLink(false) },
+        { icon: ExternalLink, label: "افزودن پیوند بیرونی", onClick: () => insertLink(true) },
+        { icon: FilePlus, label: "فایل پیوست", onClick: attachFile },
+        { type: "sep" },
+        {
+          type: "submenu",
+          icon: Pilcrow,
+          label: "بندنوشت",
+          rows: [
+            { icon: List, label: "فهرست گلوله‌ای", onClick: () => transformSelectedLines((line) => `- ${removeLineMarkers(line)}`) },
+            { icon: ListOrdered, label: "فهرست شماره‌دار", onClick: () => transformSelectedLines((line, i) => `${i + 1}. ${removeLineMarkers(line)}`) },
+            { icon: ListChecks, label: "فهرست کارها", onClick: () => transformSelectedLines((line) => `- [ ] ${removeLineMarkers(line)}`) },
+            { icon: Heading1, label: "۱ سرفصل", onClick: () => transformSelectedLines((line) => `# ${removeLineMarkers(line)}`) },
+            { icon: Heading2, label: "۲ سرفصل", onClick: () => transformSelectedLines((line) => `## ${removeLineMarkers(line)}`) },
+            { icon: Heading3, label: "۳ سرفصل", onClick: () => transformSelectedLines((line) => `### ${removeLineMarkers(line)}`) },
+            { icon: Heading4, label: "۴ سرفصل", onClick: () => transformSelectedLines((line) => `#### ${removeLineMarkers(line)}`) },
+            { icon: Heading5, label: "۵ سرفصل", onClick: () => transformSelectedLines((line) => `##### ${removeLineMarkers(line)}`) },
+            { icon: Heading6, label: "۶ سرفصل", onClick: () => transformSelectedLines((line) => `###### ${removeLineMarkers(line)}`) },
+            { icon: Pilcrow, label: "تنه", onClick: () => transformSelectedLines((line) => removeLineMarkers(line)) },
+            { icon: Quote, label: "نقل‌قول", onClick: () => transformSelectedLines((line) => `> ${removeLineMarkers(line)}`) },
+          ],
+        },
+        {
+          type: "submenu",
+          icon: TextCursorInput,
+          label: "درج",
+          rows: [
+            { icon: Minus, label: "جداکننده", onClick: () => replaceSelection("\n---\n") },
+            { icon: TextCursorInput, label: "تاریخ امروز", onClick: () => replaceSelection(new Date().toLocaleDateString("fa-IR")) },
+            { icon: TextCursorInput, label: "زمان فعلی", onClick: () => replaceSelection(new Date().toLocaleTimeString("fa-IR")) },
+            { icon: Quote, label: "بلوک نقل‌قول", onClick: () => transformSelectedLines((line) => `> ${removeLineMarkers(line)}`) },
+          ],
+        },
+        { type: "sep" },
+        { icon: Scissors, label: "برش", disabled: !hasSelection, onClick: () => void cutSelected() },
+        { icon: Copy, label: "کپی", disabled: !hasSelection, onClick: () => void copySelected() },
+        { icon: ClipboardPaste, label: "جایگذاری", onClick: () => void pasteText() },
+        { icon: Clipboard, label: "جایگذاری به‌صورت متن ساده", onClick: () => void pasteText() },
+        {
+          icon: ClipboardCopy,
+          label: "انتخاب همه",
+          onClick: () => {
+            el.focus();
+            el.select();
+          },
+        },
+      ];
+
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 430), rows });
+    },
+    [push, updateNote]
+  );
 
   const openCanvasMenu = useCallback(
     (x: number, y: number) => {
@@ -647,6 +1004,47 @@ export default function App() {
 
       {/* world */}
       <div ref={worldRef} className="absolute left-0 top-0 will-change-transform" style={{ transformOrigin: "0 0" }}>
+        <svg className="absolute left-0 top-0 overflow-visible pointer-events-none z-0" width="1" height="1">
+          <defs>
+            <marker id="note-arrow" markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa" />
+            </marker>
+          </defs>
+          {connections.map((c) => {
+            const from = endpointPoint(c.from);
+            const to = endpointPoint(c.to);
+            if (!from || !to) return null;
+            return (
+              <path
+                key={c.id}
+                d={connectionPath(from, c.from.side, to, c.to.side)}
+                fill="none"
+                stroke="#a78bfa"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                markerEnd="url(#note-arrow)"
+                opacity={0.9}
+              />
+            );
+          })}
+          {draftConnection && (() => {
+            const from = endpointPoint(draftConnection.from);
+            if (!from) return null;
+            const toSide = draftConnection.target?.side ?? oppositeSide(draftConnection.from.side);
+            return (
+              <path
+                d={connectionPath(from, draftConnection.from.side, draftConnection.to, toSide)}
+                fill="none"
+                stroke="#c4b5fd"
+                strokeWidth={2.5}
+                strokeDasharray="7 7"
+                strokeLinecap="round"
+                markerEnd="url(#note-arrow)"
+                opacity={0.95}
+              />
+            );
+          })()}
+        </svg>
         {notes.map((n) => (
           <NoteCard
             key={n.id}
@@ -659,6 +1057,8 @@ export default function App() {
             onDelete={(id) => deleteIds([id])}
             onCopy={copyNoteById}
             onDragStart={onNoteDragStart}
+            onConnectorDragStart={onConnectorDragStart}
+            onEditorContextMenu={openEditorMenu}
             onContextMenu={onNoteContextMenu}
             registerRef={registerNoteRef}
             interactive
@@ -693,6 +1093,26 @@ export default function App() {
         onDeleteSelected={() => deleteIds([...selected])}
         onClearSelection={() => setSelected(new Set())}
       />
+
+      <AnimatePresence>
+        {connectionPrompt && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            className="fixed z-[90] glass rounded-2xl p-1.5 shadow-2xl"
+            style={{ left: connectionPrompt.x, top: connectionPrompt.y }}
+          >
+            <button
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+              onClick={addConnectedNoteFromPrompt}
+            >
+              <Plus size={15} style={{ color: "var(--accent)" }} /> افزودن یادداشت
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* bottom status + hints */}
       <div data-ui className="fixed bottom-4 inset-x-0 z-[65] flex justify-center pointer-events-none px-3">

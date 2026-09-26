@@ -1,3 +1,5 @@
+export type ConnectionSide = "top" | "right" | "bottom" | "left";
+
 export interface Note {
   id: string;
   title: string;
@@ -5,8 +7,20 @@ export interface Note {
   x: number;
   y: number;
   width: number;
+  height: number;
   color: string; // palette id
   createdAt: number;
+}
+
+export interface NoteConnectionEndpoint {
+  noteId: string;
+  side: ConnectionSide;
+}
+
+export interface NoteConnection {
+  id: string;
+  from: NoteConnectionEndpoint;
+  to: NoteConnectionEndpoint;
 }
 
 export interface ViewState {
@@ -25,6 +39,7 @@ export type Theme = "dark" | "light";
 
 export interface PersistedState {
   notes: Note[];
+  connections?: NoteConnection[];
   view: ViewState;
   theme: Theme;
 }

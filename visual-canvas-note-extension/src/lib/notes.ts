@@ -2,6 +2,7 @@ import type { Note, PendingNote, ViewState } from "../types";
 import { PALETTE, uid } from "./constants";
 
 export const DEFAULT_NOTE_W = 288;
+export const DEFAULT_NOTE_H = 190;
 
 export function createNote(partial: Partial<Note> = {}): Note {
   return {
@@ -11,6 +12,7 @@ export function createNote(partial: Partial<Note> = {}): Note {
     x: 0,
     y: 0,
     width: DEFAULT_NOTE_W,
+    height: DEFAULT_NOTE_H,
     color: "slate",
     createdAt: Date.now(),
     ...partial,
