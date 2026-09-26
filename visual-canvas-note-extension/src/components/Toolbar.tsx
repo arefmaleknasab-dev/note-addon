@@ -29,6 +29,7 @@ interface Props {
   onAdd: () => void;
   onToggleTheme: () => void;
   onHelp: () => void;
+  onDownloadExtension: () => void;
   onCopySeparate: () => void;
   onCopyCombined: () => void;
   onDeleteSelected: () => void;
@@ -119,14 +120,12 @@ export default function Toolbar(p: Props) {
         <TButton title="راهنما و نصب افزونه" onClick={p.onHelp}>
           <HelpCircle size={16} />
         </TButton>
-        <a
-          href="persian-notes-extension.zip"
-          download
-          title="دانلود فایل نصب افزونه"
-          className="icon-btn w-9 h-9"
+        <TButton
+          title="دانلود آخرین فایل نصبی افزونه‌ی کروم"
+          onClick={p.onDownloadExtension}
         >
           <Download size={16} />
-        </a>
+        </TButton>
 
         {/* selection actions */}
         <AnimatePresence>

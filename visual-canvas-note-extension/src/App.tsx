@@ -45,6 +45,7 @@ import {
 import { faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const EXTENSION_PACKAGE_NAME = "persian-notes-extension.zip";
 
 type Gesture =
   | { type: "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean }
@@ -533,12 +534,13 @@ export default function App() {
     y: clamp(y, 8, window.innerHeight - estH - 12),
   });
 
-  const downloadExtension = () => {
+  const downloadExtension = useCallback(() => {
     const a = document.createElement("a");
-    a.href = "persian-notes-extension.zip";
-    a.download = "persian-notes-extension.zip";
+    a.href = `${EXTENSION_PACKAGE_NAME}?v=${Date.now()}`;
+    a.download = EXTENSION_PACKAGE_NAME;
+    a.rel = "noopener";
     a.click();
-  };
+  }, []);
 
   const openCanvasMenu = useCallback(
     (x: number, y: number) => {
@@ -579,7 +581,7 @@ export default function App() {
       ];
       setMenu({ ...clampMenu(x, y, 380), rows });
     },
-    [addNoteAt, arrangeGrid, fitView, applyView, persistSoon]
+    [addNoteAt, arrangeGrid, fitView, applyView, persistSoon, downloadExtension]
   );
 
   const onNoteContextMenu = useCallback(
@@ -706,6 +708,7 @@ export default function App() {
         onAdd={() => addNoteAt()}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onHelp={() => setHelpOpen(true)}
+        onDownloadExtension={downloadExtension}
         onCopySeparate={copySeparate}
         onCopyCombined={copyAll}
         onDeleteSelected={() => deleteIds([...selected])}
@@ -749,7 +752,11 @@ export default function App() {
       </AnimatePresence>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
-      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onDownloadExtension={downloadExtension}
+      />
       <ToastStack toasts={toasts} />
       <div className="noise-overlay" />
     </div>

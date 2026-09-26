@@ -16,10 +16,11 @@ import {
 interface Props {
   open: boolean;
   onClose: () => void;
+  onDownloadExtension: () => void;
 }
 
 const steps = [
-  { icon: Download, text: "فایل «persian-notes-extension.zip» را از دکمه‌ی دانلود در نوار ابزار دریافت کن." },
+  { icon: Download, text: "فایل به‌روز «persian-notes-extension.zip» را از دکمه‌ی دانلود در نوار ابزار دریافت کن." },
   { icon: FolderOpen, text: "فایل زیپ را در یک پوشه از حالت فشرده خارج کن (Extract)." },
   { icon: Globe, text: "در کروم به آدرس chrome://extensions برو." },
   { icon: ToggleRight, text: "گزینه‌ی «حالت توسعه‌دهنده / Developer mode» را از بالای صفحه فعال کن." },
@@ -38,7 +39,7 @@ const shortcuts: { keys: string[]; label: string }[] = [
   { keys: ["Esc"], label: "لغو انتخاب / بستن منوها" },
 ];
 
-export default function HelpModal({ open, onClose }: Props) {
+export default function HelpModal({ open, onClose, onDownloadExtension }: Props) {
   return (
     <AnimatePresence>
       {open && (
@@ -102,14 +103,18 @@ export default function HelpModal({ open, onClose }: Props) {
                     </li>
                   ))}
                 </ol>
-                <a
-                  href="persian-notes-extension.zip"
-                  download
+                <button
+                  type="button"
+                  onClick={onDownloadExtension}
                   className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-bold text-[#1a1206] transition-transform hover:scale-[1.03] active:scale-95"
                   style={{ background: "linear-gradient(135deg,#f5a623,#e2761b)" }}
                 >
-                  <Download size={15} /> دانلود فایل نصبی افزونه
-                </a>
+                  <Download size={15} /> دانلود آخرین فایل نصبی افزونه
+                </button>
+                <p className="mt-3 text-[11.5px] leading-6" style={{ color: "var(--text-dim)" }}>
+                  در حالت پیش‌نمایش، بعد از هر تغییر پروژه فایل نصبی به‌صورت خودکار دوباره ساخته می‌شود؛
+                  دکمه‌ی دانلود همیشه آخرین نسخه را می‌دهد.
+                </p>
               </section>
 
               {/* shortcuts */}

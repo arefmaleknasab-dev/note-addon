@@ -4,7 +4,7 @@
 
 ## مراحل نصب
 
-۱. فایل `persian-notes-extension.zip` را از حالت فشرده خارج کنید (Extract).
+۱. فایل به‌روز `persian-notes-extension.zip` را از دکمه‌ی دانلود پیش‌نمایش دریافت و از حالت فشرده خارج کنید (Extract).
 ۲. در مرورگر کروم به آدرس زیر بروید:
 
    chrome://extensions
