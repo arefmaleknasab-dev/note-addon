@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "یادداشت‌های بوم",
+  "version": "1.0.0",
+  "description": "یادداشت‌برداری بصری فارسی روی بوم آزاد",
+  "permissions": ["storage", "contextMenus", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {"service_worker": "background.js"},
+  "chrome_url_overrides": {"newtab": "newtab.html"},
+  "action": {"default_title": "یادداشت‌های بوم"},
+  "icons": {}
+}
