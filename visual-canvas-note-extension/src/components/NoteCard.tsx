@@ -1,8 +1,8 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, GripVertical, Palette, Trash2 } from "lucide-react";
+import { Check, Copy, GripVertical, Palette, Trash2 } from "lucide-react";
 import type { Note } from "../types";
 import { colorHex, PALETTE } from "../lib/constants";
-import { relativeTime, truncate } from "../lib/notes";
+import { relativeTime } from "../lib/notes";
 
 interface Props {
   note: Note;
@@ -204,20 +204,6 @@ function NoteCard({
 
         {/* footer */}
         <div className="flex items-center gap-2 px-4 pb-2.5 -mt-0.5">
-          {note.source?.url && (
-            <a
-              href={note.source.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1 text-[10.5px] hover:underline underline-offset-2"
-              style={{ color: hex }}
-              onPointerDown={(e) => e.stopPropagation()}
-              title={note.source.title}
-            >
-              <ExternalLink size={10} />
-              {truncate(note.source.title || "منبع", 26)}
-            </a>
-          )}
           <span className="text-[10.5px] tabular ms-auto" style={{ color: "var(--text-dim)" }}>
             {relativeTime(note.createdAt)}
           </span>

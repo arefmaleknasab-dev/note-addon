@@ -13,7 +13,6 @@ export function createNote(partial: Partial<Note> = {}): Note {
     width: DEFAULT_NOTE_W,
     color: "slate",
     createdAt: Date.now(),
-    source: null,
     ...partial,
   };
 }
@@ -21,11 +20,10 @@ export function createNote(partial: Partial<Note> = {}): Note {
 export function noteFromPending(p: PendingNote, index: number): Note {
   const accent = PALETTE[(index % (PALETTE.length - 1)) + 1]; // skip slate, colorful web notes
   return createNote({
-    title: p.pageTitle ? truncate(p.pageTitle, 64) : "از صفحه‌ی وب",
+    title: "",
     text: p.text,
     color: accent.id,
     createdAt: p.createdAt || Date.now(),
-    source: p.url ? { title: p.pageTitle, url: p.url } : null,
   });
 }
 

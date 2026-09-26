@@ -4,9 +4,7 @@ import {
   ClipboardCopy,
   Copy,
   CopyPlus,
-  Download,
   Hand,
-  HelpCircle,
   LayoutGrid,
   LoaderCircle,
   Maximize,
@@ -20,7 +18,6 @@ import {
 import NoteCard from "./components/NoteCard";
 import ContextMenu, { type MenuRow } from "./components/ContextMenu";
 import Toolbar from "./components/Toolbar";
-import HelpModal from "./components/HelpModal";
 import EmptyState from "./components/EmptyState";
 import { ToastStack, useToasts } from "./components/Toasts";
 import type { Note, Theme, ViewState } from "./types";
@@ -45,7 +42,6 @@ import {
 import { faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
-const EXTENSION_PACKAGE_NAME = "persian-notes-extension.zip";
 
 type Gesture =
   | { type: "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean }
@@ -67,7 +63,6 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [recentId, setRecentId] = useState<string | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
   const [zoomLabel, setZoomLabel] = useState(1);
   const [copyJob, setCopyJob] = useState<{ done: number; total: number } | null>(null);
@@ -202,8 +197,6 @@ export default function App() {
       applyView();
       setLoaded(true);
       drainPending(true);
-      // first-run: show install guide if not inside the extension
-      if (!isExtension) window.setTimeout(() => setHelpOpen(true), 900);
     })();
     const unsub = subscribePending(() => drainPending(false));
     const onBlur = () => persistSoon();
@@ -517,7 +510,6 @@ export default function App() {
         deleteIds([...selected]);
       } else if (e.key === "Escape") {
         setMenu(null);
-        setHelpOpen(false);
         setSelected(new Set());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
@@ -533,17 +525,6 @@ export default function App() {
     x: clamp(x, 8, window.innerWidth - 248),
     y: clamp(y, 8, window.innerHeight - estH - 12),
   });
-
-  const downloadExtension = useCallback(() => {
-    const a = document.createElement("a");
-    a.href = `${EXTENSION_PACKAGE_NAME}?v=${Date.now()}`;
-    a.download = EXTENSION_PACKAGE_NAME;
-    a.rel = "noopener";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }, []);
 
   const openCanvasMenu = useCallback(
     (x: number, y: number) => {
@@ -578,13 +559,10 @@ export default function App() {
           label: themeRef.current === "dark" ? "حالت روشن" : "حالت تاریک",
           onClick: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
         },
-        { type: "sep" },
-        { icon: Download, label: "دانلود فایل نصبی افزونه", onClick: downloadExtension },
-        { icon: HelpCircle, label: "راهنما و نصب", onClick: () => setHelpOpen(true) },
       ];
-      setMenu({ ...clampMenu(x, y, 380), rows });
+      setMenu({ ...clampMenu(x, y, 340), rows });
     },
-    [addNoteAt, arrangeGrid, fitView, applyView, persistSoon, downloadExtension]
+    [addNoteAt, arrangeGrid, fitView, applyView, persistSoon]
   );
 
   const onNoteContextMenu = useCallback(
@@ -692,7 +670,7 @@ export default function App() {
       <div ref={selRectRef} className="selection-rect" style={{ display: "none" }} />
 
       {loaded && notes.length === 0 && (
-        <EmptyState onAdd={() => addNoteAt()} onHelp={() => setHelpOpen(true)} />
+        <EmptyState onAdd={() => addNoteAt()} />
       )}
 
       <Toolbar
@@ -710,7 +688,6 @@ export default function App() {
         }}
         onAdd={() => addNoteAt()}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        onHelp={() => setHelpOpen(true)}
         onCopySeparate={copySeparate}
         onCopyCombined={copyAll}
         onDeleteSelected={() => deleteIds([...selected])}
@@ -754,7 +731,6 @@ export default function App() {
       </AnimatePresence>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
-      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastStack toasts={toasts} />
       <div className="noise-overlay" />
     </div>

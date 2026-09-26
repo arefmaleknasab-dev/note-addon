@@ -35,8 +35,8 @@ chrome.runtime.onStartup.addListener(setupContextMenu);
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
-  const text = (info.selectionText || "").trim();
-  if (!text) return;
+  const text = info.selectionText || "";
+  if (!text.trim()) return;
 
   try {
     const data = await chrome.storage.local.get(PENDING_KEY);
@@ -44,8 +44,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     pending.push({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
       text,
-      url: info.pageUrl || (tab && tab.url) || "",
-      pageTitle: (tab && tab.title) || "",
       createdAt: Date.now(),
     });
     await chrome.storage.local.set({ [PENDING_KEY]: pending });

@@ -1,8 +1,3 @@
-export interface NoteSource {
-  title: string;
-  url: string;
-}
-
 export interface Note {
   id: string;
   title: string;
@@ -12,7 +7,6 @@ export interface Note {
   width: number;
   color: string; // palette id
   createdAt: number;
-  source?: NoteSource | null;
 }
 
 export interface ViewState {
@@ -24,8 +18,6 @@ export interface ViewState {
 export interface PendingNote {
   id: string;
   text: string;
-  url: string;
-  pageTitle: string;
   createdAt: number;
 }
 
