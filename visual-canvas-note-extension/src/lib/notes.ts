@@ -3,6 +3,10 @@ import { PALETTE, uid } from "./constants";
 
 export const DEFAULT_NOTE_W = 288;
 export const DEFAULT_NOTE_H = 190;
+export const MIN_NOTE_W = 230;
+export const MIN_NOTE_H = 130;
+export const MAX_NOTE_W = 1360;
+export const MAX_NOTE_H = 2160;
 
 export function createNote(partial: Partial<Note> = {}): Note {
   return {

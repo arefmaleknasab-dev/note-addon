@@ -2,7 +2,15 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Check, Copy, GripVertical, Palette, Trash2 } from "lucide-react";
 import type { ConnectionSide, Note } from "../types";
 import { colorHex, PALETTE } from "../lib/constants";
-import { DEFAULT_NOTE_H, DEFAULT_NOTE_W, relativeTime } from "../lib/notes";
+import {
+  DEFAULT_NOTE_H,
+  DEFAULT_NOTE_W,
+  MAX_NOTE_H,
+  MAX_NOTE_W,
+  MIN_NOTE_H,
+  MIN_NOTE_W,
+  relativeTime,
+} from "../lib/notes";
 
 interface Props {
   note: Note;
@@ -10,8 +18,10 @@ interface Props {
   zoom: number;
   autoFocusId: string | null;
   recentId: string | null;
+  editing: boolean;
   onChange: (id: string, patch: Partial<Note>) => void;
   onDelete: (id: string) => void;
+  onRequestEdit: (id: string) => void;
   onCopy: (id: string) => void;
   onDragStart: (e: React.PointerEvent, id: string) => void;
   onConnectorDragStart: (e: React.PointerEvent, id: string, side: ConnectionSide) => void;
@@ -27,13 +37,8 @@ interface Props {
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
-const MIN_W = 230;
-const MAX_W = 680;
-const MIN_H = 130;
-const MAX_H = 720;
-
 const connectorClass =
-  "absolute z-30 w-4 h-4 rounded-full border-2 border-white/80 bg-violet-500 shadow-[0_0_0_5px_rgba(139,92,246,.18)] opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 transition-all cursor-crosshair";
+  "absolute z-30 w-4 h-4 rounded-full border-2 border-white/80 opacity-0 scale-75 transition-all cursor-crosshair group-hover/edge:opacity-100 group-hover/edge:scale-100";
 
 const resizeHandles: { id: ResizeHandle; className: string; cursor: string }[] = [
   { id: "n", className: "top-0 left-5 right-5 h-2 -translate-y-1/2", cursor: "ns-resize" },
@@ -52,10 +57,12 @@ function NoteCard({
   zoom,
   autoFocusId,
   recentId,
+  editing,
   onChange,
   onDelete,
   onCopy,
   onDragStart,
+  onRequestEdit,
   onConnectorDragStart,
   onEditorContextMenu,
   onContextMenu,
@@ -66,6 +73,7 @@ function NoteCard({
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const hex = colorHex(note.color);
   const width = note.width ?? DEFAULT_NOTE_W;
@@ -109,21 +117,21 @@ function NoteCard({
         y = startY + dy;
       }
 
-      if (w < MIN_W) {
-        if (handle.includes("w")) x -= MIN_W - w;
-        w = MIN_W;
+      if (w < MIN_NOTE_W) {
+        if (handle.includes("w")) x -= MIN_NOTE_W - w;
+        w = MIN_NOTE_W;
       }
-      if (w > MAX_W) {
-        if (handle.includes("w")) x -= MAX_W - w;
-        w = MAX_W;
+      if (w > MAX_NOTE_W) {
+        if (handle.includes("w")) x -= MAX_NOTE_W - w;
+        w = MAX_NOTE_W;
       }
-      if (h < MIN_H) {
-        if (handle.includes("n")) y -= MIN_H - h;
-        h = MIN_H;
+      if (h < MIN_NOTE_H) {
+        if (handle.includes("n")) y -= MIN_NOTE_H - h;
+        h = MIN_NOTE_H;
       }
-      if (h > MAX_H) {
-        if (handle.includes("n")) y -= MAX_H - h;
-        h = MAX_H;
+      if (h > MAX_NOTE_H) {
+        if (handle.includes("n")) y -= MAX_NOTE_H - h;
+        h = MAX_NOTE_H;
       }
 
       next = { x, y, width: w, height: h };
@@ -156,13 +164,39 @@ function NoteCard({
     window.setTimeout(() => setCopied(false), 1400);
   };
 
-  const connector = (side: ConnectionSide, className: string) => (
+  const openNoteMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu(e, note.id);
+  };
+
+  const connectorDot = (side: ConnectionSide, className: string) => (
     <button
+      data-connector
       data-nodrag
       title="کشیدن برای اتصال یادداشت‌ها"
       className={`${connectorClass} ${className}`}
+      style={{ background: hex, boxShadow: `0 0 0 5px ${hex}26` }}
       onPointerDown={(e) => onConnectorDragStart(e, note.id, side)}
     />
+  );
+
+  const edgeZone = (
+    side: ConnectionSide,
+    handle: ResizeHandle,
+    className: string,
+    dotClassName: string,
+    cursor: string
+  ) => (
+    <div
+      data-resize
+      data-nodrag
+      className={`absolute z-30 group/edge ${className}`}
+      style={{ cursor }}
+      onPointerDown={(e) => startResize(e, handle)}
+    >
+      {connectorDot(side, dotClassName)}
+    </div>
   );
 
   return (
@@ -172,8 +206,10 @@ function NoteCard({
         registerRef(note.id, el);
       }}
       data-note={note.id}
+      data-editing={editing ? "true" : undefined}
       className={[
         "absolute top-0 left-0 group",
+        editing ? "note-editing" : "cursor-grab active:cursor-grabbing",
         selected ? "note-selected z-20" : "z-10",
         hover ? "note-hovered" : "",
       ].join(" ")}
@@ -186,11 +222,26 @@ function NoteCard({
       }}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
-      onContextMenu={(e) => {
-        if ((e.target as HTMLElement).closest("input, textarea")) return;
-        e.preventDefault();
+      onDoubleClick={(e) => {
         e.stopPropagation();
-        onContextMenu(e, note.id);
+        onRequestEdit(note.id);
+      }}
+      onPointerDown={(e) => {
+        if (editing) return;
+        if ((e.target as HTMLElement).closest("[data-nodrag], button, a")) return;
+        onDragStart(e, note.id);
+      }}
+      onWheel={(e) => {
+        if (!editing) return;
+        e.stopPropagation();
+        if (!(e.target as HTMLElement).closest("textarea")) {
+          e.preventDefault();
+          if (bodyRef.current) bodyRef.current.scrollTop += e.deltaY;
+        }
+      }}
+      onContextMenu={(e) => {
+        if (editing && (e.target as HTMLElement).closest("input, textarea")) return;
+        openNoteMenu(e);
       }}
     >
       <div
@@ -210,14 +261,19 @@ function NoteCard({
           <GripVertical size={14} className="shrink-0 opacity-40" style={{ color: hex }} />
           <input
             ref={titleRef}
-            data-nodrag
+            data-editor
+            data-nodrag={editing ? "true" : undefined}
             dir="auto"
             value={note.title}
             placeholder="عنوان یادداشت…"
+            readOnly={!editing}
+            tabIndex={editing ? 0 : -1}
             className="note-title-input text-[14.5px] font-bold leading-6 px-1"
             onChange={(e) => onChange(note.id, { title: e.target.value })}
-            onContextMenu={(e) => onEditorContextMenu(e, note.id, "title")}
-            onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "title") : openNoteMenu(e))}
+            onPointerDown={(e) => {
+              if (editing) e.stopPropagation();
+            }}
             spellCheck={false}
           />
 
@@ -259,15 +315,21 @@ function NoteCard({
         {/* body */}
         <div className="px-4 pb-2 flex-1 min-h-0">
           <textarea
-            data-nodrag
+            ref={bodyRef}
+            data-editor
+            data-nodrag={editing ? "true" : undefined}
             dir="auto"
             value={note.text}
             placeholder="متن خود را بنویسید…"
+            readOnly={!editing}
+            tabIndex={editing ? 0 : -1}
             className="note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto"
             rows={2}
             onChange={(e) => onChange(note.id, { text: e.target.value })}
-            onContextMenu={(e) => onEditorContextMenu(e, note.id, "text")}
-            onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "text") : openNoteMenu(e))}
+            onPointerDown={(e) => {
+              if (editing) e.stopPropagation();
+            }}
             spellCheck={false}
           />
         </div>
@@ -280,17 +342,42 @@ function NoteCard({
         </div>
       </div>
 
-      {/* connection handles */}
-      {connector("top", "top-0 left-1/2 -translate-x-1/2 -translate-y-1/2")}
-      {connector("right", "right-0 top-1/2 translate-x-1/2 -translate-y-1/2")}
-      {connector("bottom", "bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2")}
-      {connector("left", "left-0 top-1/2 -translate-x-1/2 -translate-y-1/2")}
+      {/* side lines: resize on drag, show connection dot only while hovering that side */}
+      {edgeZone(
+        "top",
+        "n",
+        "top-0 left-5 right-5 -translate-y-1/2 h-[18px]",
+        "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+        "ns-resize"
+      )}
+      {edgeZone(
+        "right",
+        "e",
+        "right-0 top-5 bottom-5 translate-x-1/2 w-[18px]",
+        "right-1/2 top-1/2 translate-x-1/2 -translate-y-1/2",
+        "ew-resize"
+      )}
+      {edgeZone(
+        "bottom",
+        "s",
+        "bottom-0 left-5 right-5 translate-y-1/2 h-[18px]",
+        "bottom-1/2 left-1/2 -translate-x-1/2 translate-y-1/2",
+        "ns-resize"
+      )}
+      {edgeZone(
+        "left",
+        "w",
+        "left-0 top-5 bottom-5 -translate-x-1/2 w-[18px]",
+        "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+        "ew-resize"
+      )}
 
-      {/* resize grips: four sides + four corners */}
+      {/* corner resize grips */}
       <div data-nodrag className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-        {resizeHandles.map((h) => (
+        {resizeHandles.filter((h) => h.id.length === 2).map((h) => (
           <button
             key={h.id}
+            data-resize
             title="تغییر اندازه"
             className={`absolute pointer-events-auto rounded-lg ${h.className}`}
             style={{ cursor: h.cursor }}
@@ -348,6 +435,7 @@ export default memo(NoteCard, (prev, next) => {
     prev.zoom === next.zoom &&
     prev.autoFocusId === next.autoFocusId &&
     prev.recentId === next.recentId &&
+    prev.editing === next.editing &&
     prev.interactive === next.interactive
   );
 });

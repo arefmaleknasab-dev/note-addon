@@ -10,6 +10,7 @@ import {
   FilePlus,
   Hand,
   Heading1,
+  LayoutGrid,
   Heading2,
   Heading3,
   Heading4,
@@ -54,6 +55,10 @@ import {
   createNote,
   DEFAULT_NOTE_H,
   DEFAULT_NOTE_W,
+  MAX_NOTE_H,
+  MAX_NOTE_W,
+  MIN_NOTE_H,
+  MIN_NOTE_W,
   noteFromPending,
   seedNotes,
   viewCenter,
@@ -61,6 +66,7 @@ import {
 import { faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const CONNECTION_COLOR = "#8b95a7";
 
 type Gesture =
   | { type: "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean }
@@ -133,12 +139,26 @@ const connectionPath = (from: Point, fromSide: ConnectionSide, to: Point, toSide
   return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`;
 };
 
+const estimateNoteSize = (text: string) => {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const longest = Math.max(0, ...lines.map((line) => line.length));
+  const width = clamp(Math.max(DEFAULT_NOTE_W, longest * 7.2 + 76), MIN_NOTE_W, MAX_NOTE_W);
+  const charsPerLine = Math.max(22, Math.floor((width - 48) / 7.2));
+  const visualLines = lines.reduce(
+    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, line.length) / charsPerLine)),
+    0
+  );
+  const height = clamp(visualLines * 25 + 84, MIN_NOTE_H, MAX_NOTE_H);
+  return { width: Math.round(width), height: Math.round(height) };
+};
+
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [connections, setConnections] = useState<NoteConnection[]>([]);
   const [draftConnection, setDraftConnection] = useState<DraftConnection | null>(null);
   const [connectionPrompt, setConnectionPrompt] = useState<ConnectionPrompt | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark"); // dark by default
   const [loaded, setLoaded] = useState(false);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
@@ -160,6 +180,8 @@ export default function App() {
   const gesture = useRef<Gesture>(null);
   const suppressCtx = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
+  const undoStack = useRef<{ notes: Note[]; connections: NoteConnection[] }[]>([]);
+  const redoStack = useRef<{ notes: Note[]; connections: NoteConnection[] }[]>([]);
 
   notesRef.current = notes;
   connectionsRef.current = connections;
@@ -249,11 +271,27 @@ export default function App() {
         await clearPendingNotes();
         const c = viewCenter(viewRef.current);
         const base = notesRef.current.length;
-        const fresh = items.map((p, i) => ({
-          ...noteFromPending(p, base + i),
-          x: c.x - DEFAULT_NOTE_W / 2 + ((i % 3) - 1) * 34,
-          y: c.y - 130 + ((i % 3) - 1) * 30,
-        }));
+        const rightmost = notesRef.current.reduce<Note | null>((best, note) => {
+          if (!best) return note;
+          return note.x + (note.width ?? DEFAULT_NOTE_W) > best.x + (best.width ?? DEFAULT_NOTE_W)
+            ? note
+            : best;
+        }, null);
+        let cursorX = rightmost
+          ? rightmost.x + (rightmost.width ?? DEFAULT_NOTE_W) + 64
+          : c.x - DEFAULT_NOTE_W / 2;
+        const baseY = rightmost ? rightmost.y : c.y - DEFAULT_NOTE_H / 2;
+        const fresh = items.map((p, i) => {
+          const size = estimateNoteSize(p.text);
+          const note = {
+            ...noteFromPending(p, base + i),
+            ...size,
+            x: Math.round(cursorX),
+            y: Math.round(baseY + i * 34),
+          };
+          cursorX += size.width + 64;
+          return note;
+        });
         setNotes((prev) => [...prev, ...fresh]);
         setRecentId(fresh[0].id);
         window.setTimeout(() => setRecentId(null), 2600);
@@ -320,20 +358,63 @@ export default function App() {
 
   const deleteIds = useCallback(
     (ids: string[]) => {
-      if (!ids.length) return;
-      setNotes((prev) => prev.filter((n) => !ids.includes(n.id)));
-      setConnections((prev) =>
-        prev.filter((c) => !ids.includes(c.from.noteId) && !ids.includes(c.to.noteId))
+      const unique = [...new Set(ids)];
+      if (!unique.length) return;
+      const idSet = new Set(unique);
+      const doomed = notesRef.current.filter((n) => idSet.has(n.id));
+      if (!doomed.length) return;
+      const ok = window.confirm(
+        doomed.length > 1
+          ? `آیا از حذف ${faNum(doomed.length)} یادداشت مطمئن هستید؟`
+          : "آیا از حذف این یادداشت مطمئن هستید؟"
       );
+      if (!ok) return;
+      const related = connectionsRef.current.filter(
+        (c) => idSet.has(c.from.noteId) || idSet.has(c.to.noteId)
+      );
+      undoStack.current.push({ notes: doomed, connections: related });
+      redoStack.current = [];
+      setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
+      setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
+      setEditingId((id) => (id && idSet.has(id) ? null : id));
       setSelected((prev) => {
         const s = new Set(prev);
-        ids.forEach((id) => s.delete(id));
+        unique.forEach((id) => s.delete(id));
         return s;
       });
-      push("info", ids.length > 1 ? `${faNum(ids.length)} یادداشت حذف شد` : "یادداشت حذف شد");
+      push("info", doomed.length > 1 ? `${faNum(doomed.length)} یادداشت حذف شد` : "یادداشت حذف شد");
     },
     [push]
   );
+
+  const undoDelete = useCallback(() => {
+    const snap = undoStack.current.pop();
+    if (!snap) return;
+    redoStack.current.push(snap);
+    const ids = new Set(snap.notes.map((n) => n.id));
+    setNotes((prev) => [...prev.filter((n) => !ids.has(n.id)), ...snap.notes]);
+    setConnections((prev) => {
+      const existing = new Set(prev.map((c) => c.id));
+      return [...prev, ...snap.connections.filter((c) => !existing.has(c.id))];
+    });
+    setSelected(ids);
+    push("success", "حذف یادداشت بازگردانده شد");
+  }, [push]);
+
+  const redoDelete = useCallback(() => {
+    const snap = redoStack.current.pop();
+    if (!snap) return;
+    undoStack.current.push(snap);
+    const ids = new Set(snap.notes.map((n) => n.id));
+    setNotes((prev) => prev.filter((n) => !ids.has(n.id)));
+    setConnections((prev) => prev.filter((c) => !ids.has(c.from.noteId) && !ids.has(c.to.noteId)));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      ids.forEach((id) => s.delete(id));
+      return s;
+    });
+    push("info", "حذف دوباره انجام شد");
+  }, [push]);
 
   const duplicateIds = useCallback(
     (ids: string[]) => {
@@ -459,20 +540,30 @@ export default function App() {
   const nearestConnector = useCallback(
     (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
       const v = viewRef.current;
+      const p = worldPointFromScreen(clientX, clientY);
+      const snap = 34 / v.zoom;
       let best: { endpoint: Endpoint; d: number } | null = null;
       for (const note of notesRef.current) {
         if (note.id === excludeId) continue;
-        for (const side of ["top", "right", "bottom", "left"] as ConnectionSide[]) {
-          const p = sidePoint(note, side);
-          const sx = p.x * v.zoom + v.x;
-          const sy = p.y * v.zoom + v.y;
-          const d = Math.hypot(sx - clientX, sy - clientY);
-          if (d < 34 && (!best || d < best.d)) best = { endpoint: { noteId: note.id, side }, d };
+        const { width, height } = noteSize(note);
+        const x1 = note.x;
+        const y1 = note.y;
+        const x2 = note.x + width;
+        const y2 = note.y + height;
+        const candidates: { side: ConnectionSide; d: number; inRange: boolean }[] = [
+          { side: "top", d: Math.abs(p.y - y1), inRange: p.x >= x1 - snap && p.x <= x2 + snap },
+          { side: "right", d: Math.abs(p.x - x2), inRange: p.y >= y1 - snap && p.y <= y2 + snap },
+          { side: "bottom", d: Math.abs(p.y - y2), inRange: p.x >= x1 - snap && p.x <= x2 + snap },
+          { side: "left", d: Math.abs(p.x - x1), inRange: p.y >= y1 - snap && p.y <= y2 + snap },
+        ];
+        for (const c of candidates) {
+          if (!c.inRange || c.d > snap) continue;
+          if (!best || c.d < best.d) best = { endpoint: { noteId: note.id, side: c.side }, d: c.d };
         }
       }
       return best?.endpoint ?? null;
     },
-    []
+    [worldPointFromScreen]
   );
 
   const onConnectorDragStart = useCallback(
@@ -655,11 +746,13 @@ export default function App() {
         document.body.classList.add("dragging-note");
       }
       if (!g.moved) return;
-      for (const id of g.ids) {
-        const o = g.origins[id];
-        const el = noteEls.current.get(id);
-        if (o && el) el.style.transform = `translate3d(${o.x + dx}px, ${o.y + dy}px, 0)`;
-      }
+      setNotes((prev) =>
+        prev.map((n) =>
+          g.origins[n.id]
+            ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
+            : n
+        )
+      );
     }
   }, [applyView]);
 
@@ -700,6 +793,8 @@ export default function App() {
     const el = canvasRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-note][data-editing="true"]')) return;
       e.preventDefault();
       zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.0085 : 0.0016)));
     };
@@ -715,8 +810,16 @@ export default function App() {
       if ((e.key === "Delete" || e.key === "Backspace") && selected.size) {
         e.preventDefault();
         deleteIds([...selected]);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoDelete();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redoDelete();
       } else if (e.key === "Escape") {
         setMenu(null);
+        setConnectionPrompt(null);
+        setEditingId(null);
         setSelected(new Set());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
@@ -725,7 +828,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, deleteIds]);
+  }, [selected, deleteIds, undoDelete, redoDelete]);
 
   /* -------------------------- context menus ------------------------- */
   const clampMenu = (x: number, y: number, estH: number) => ({
@@ -757,14 +860,6 @@ export default function App() {
         const end = el.selectionEnd ?? start;
         const next = el.value.slice(0, start) + text + el.value.slice(end);
         applyValue(next, selectStart ?? start + text.length, selectEnd ?? start + text.length);
-      };
-
-      const wrapSelection = (before: string, after = before, placeholder = "متن") => {
-        const start = el.selectionStart ?? 0;
-        const end = el.selectionEnd ?? start;
-        const selectedText = el.value.slice(start, end) || placeholder;
-        const inserted = `${before}${selectedText}${after}`;
-        replaceSelection(inserted, start + before.length, start + before.length + selectedText.length);
       };
 
       const transformSelectedLines = (transform: (line: string, i: number) => string) => {
@@ -1003,11 +1098,11 @@ export default function App() {
       <div className="vignette" />
 
       {/* world */}
-      <div ref={worldRef} className="absolute left-0 top-0 will-change-transform" style={{ transformOrigin: "0 0" }}>
+      <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible pointer-events-none z-0" width="1" height="1">
           <defs>
-            <marker id="note-arrow" markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa" />
+            <marker id="note-arrow" markerWidth="4" markerHeight="4" refX="3.4" refY="2" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 4 2 L 0 4 z" fill={CONNECTION_COLOR} />
             </marker>
           </defs>
           {connections.map((c) => {
@@ -1019,7 +1114,7 @@ export default function App() {
                 key={c.id}
                 d={connectionPath(from, c.from.side, to, c.to.side)}
                 fill="none"
-                stroke="#a78bfa"
+                stroke={CONNECTION_COLOR}
                 strokeWidth={2.5}
                 strokeLinecap="round"
                 markerEnd="url(#note-arrow)"
@@ -1035,7 +1130,24 @@ export default function App() {
               <path
                 d={connectionPath(from, draftConnection.from.side, draftConnection.to, toSide)}
                 fill="none"
-                stroke="#c4b5fd"
+                stroke={CONNECTION_COLOR}
+                strokeWidth={2.5}
+                strokeDasharray="7 7"
+                strokeLinecap="round"
+                markerEnd="url(#note-arrow)"
+                opacity={0.95}
+              />
+            );
+          })()}
+          {connectionPrompt && (() => {
+            const from = endpointPoint(connectionPrompt.from);
+            if (!from) return null;
+            const toSide = oppositeSide(connectionPrompt.from.side);
+            return (
+              <path
+                d={connectionPath(from, connectionPrompt.from.side, connectionPrompt.to, toSide)}
+                fill="none"
+                stroke={CONNECTION_COLOR}
                 strokeWidth={2.5}
                 strokeDasharray="7 7"
                 strokeLinecap="round"
@@ -1053,8 +1165,10 @@ export default function App() {
             zoom={zoomLabel}
             autoFocusId={autoFocusId}
             recentId={recentId}
+            editing={editingId === n.id}
             onChange={updateNote}
             onDelete={(id) => deleteIds([id])}
+            onRequestEdit={(id) => setEditingId(id)}
             onCopy={copyNoteById}
             onDragStart={onNoteDragStart}
             onConnectorDragStart={onConnectorDragStart}
@@ -1088,6 +1202,8 @@ export default function App() {
         }}
         onAdd={() => addNoteAt()}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        onUndo={undoDelete}
+        onRedo={redoDelete}
         onCopySeparate={copySeparate}
         onCopyCombined={copyAll}
         onDeleteSelected={() => deleteIds([...selected])}

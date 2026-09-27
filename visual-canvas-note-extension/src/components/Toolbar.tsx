@@ -5,9 +5,11 @@ import {
   Maximize,
   Moon,
   Plus,
+  Redo2,
   Sparkles,
   Sun,
   Trash2,
+  Undo2,
   X,
   ZoomIn,
   ZoomOut,
@@ -26,6 +28,8 @@ interface Props {
   onResetView: () => void;
   onAdd: () => void;
   onToggleTheme: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onCopySeparate: () => void;
   onCopyCombined: () => void;
   onDeleteSelected: () => void;
@@ -103,6 +107,15 @@ export default function Toolbar(p: Props) {
         </TButton>
         <TButton title="نمایش همه‌ی یادداشت‌ها" onClick={p.onFit}>
           <Maximize size={15} />
+        </TButton>
+
+        <Divider />
+
+        <TButton title="فلش قبل / بازگردانی حذف (Ctrl+Z)" onClick={p.onUndo}>
+          <Undo2 size={16} />
+        </TButton>
+        <TButton title="فلش بعد / انجام دوباره" onClick={p.onRedo}>
+          <Redo2 size={16} />
         </TButton>
 
         <Divider />
