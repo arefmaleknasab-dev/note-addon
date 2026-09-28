@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeftRight,
   ArrowRight,
-  Ban,
   Clipboard,
   ClipboardCopy,
   ClipboardPaste,
@@ -142,7 +141,7 @@ const sidePoint = (n: Note, side: ConnectionSide): Point => {
   }
 };
 
-const CONNECTION_ENDPOINT_GAP = 12;
+const CONNECTION_ENDPOINT_GAP = 2.25;
 
 const outsetPoint = (point: Point, side: ConnectionSide, gap = CONNECTION_ENDPOINT_GAP): Point => {
   const v = sideVector(side);
@@ -1261,7 +1260,7 @@ export default function App() {
           onPick: (color) => updateConnection(id, { color }),
         },
         { type: "label", text: "اتصال" },
-        { icon: Ban, label: "فلش بدون جهت", onClick: () => updateConnection(id, { direction: "none" }) },
+        { icon: Minus, label: "فلش بدون جهت", onClick: () => updateConnection(id, { direction: "none" }) },
         { icon: ArrowRight, label: "فلش تک‌جهته", onClick: () => updateConnection(id, { direction: "forward" }) },
         { icon: ArrowLeftRight, label: "فلش دوجهته", onClick: () => updateConnection(id, { direction: "both" }) },
         { type: "sep" },
@@ -1322,7 +1321,7 @@ export default function App() {
             <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
               <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
-            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="0.9" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
               <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
           </defs>
