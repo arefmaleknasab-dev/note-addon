@@ -1501,6 +1501,7 @@ export default function App() {
                   dir={labelDir}
                   value={labelValue}
                   rows={1}
+                  wrap="soft"
                   className="connection-label-input"
                   style={{ borderColor: color, color, width: labelBox.width, height: labelBox.height }}
                   onChange={(e) => updateConnection(c.id, { label: e.target.value })}
@@ -1520,7 +1521,7 @@ export default function App() {
                   dir={labelDir}
                   style={{ borderColor: color, color, width: labelBox.width, minHeight: labelBox.height }}
                 >
-                  {labelValue}
+                  <span className="connection-label-text">{labelValue}</span>
                 </button>
               )}
               {isLabelSelected && !isEditingLabel && (

@@ -195,22 +195,37 @@ body {
   line-height: 18px;
   text-align: center;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
 .connection-label {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   cursor: pointer;
   user-select: text;
+}
+.connection-label-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
 }
 .connection-label-input {
   display: block;
   padding-inline: 2px;
   resize: none;
   overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   outline: none;
   caret-color: currentColor;
   appearance: none;
