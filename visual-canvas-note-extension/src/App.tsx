@@ -1346,11 +1346,11 @@ export default function App() {
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible z-0" width="1" height="1">
           <defs>
-            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.196" refY="3" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 5.196 3 L 0 6 z" fill="context-stroke" />
+            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
-            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="5.196" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
-              <path d="M 0 0 L 5.196 3 L 0 6 z" fill="context-stroke" />
+            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
           </defs>
           {connections.map((c) => {
