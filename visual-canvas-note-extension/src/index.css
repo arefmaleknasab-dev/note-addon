@@ -181,10 +181,10 @@ body {
 .connection-label,
 .connection-label-input {
   box-sizing: border-box;
-  min-width: 18px;
+  min-width: 14px;
   max-width: 240px;
   min-height: 26px;
-  padding: 5px 6px;
+  padding: 5px 2px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
   background: var(--surface-solid);

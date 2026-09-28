@@ -174,17 +174,32 @@ const estimateNoteSize = (text: string) => {
 
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
+const CONNECTION_LABEL_FONT = '800 11.5px "Vazirmatn", "Segoe UI", Tahoma, system-ui, sans-serif';
+let connectionLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+const measureConnectionLabelLine = (line: string) => {
+  if (typeof document === "undefined") return Array.from(line).length * 7.2;
+  if (connectionLabelMeasureCtx === undefined) {
+    connectionLabelMeasureCtx = document.createElement("canvas").getContext("2d");
+  }
+  if (!connectionLabelMeasureCtx) return Array.from(line).length * 7.2;
+  connectionLabelMeasureCtx.font = CONNECTION_LABEL_FONT;
+  return connectionLabelMeasureCtx.measureText(line || " ").width;
+};
+
 const connectionLabelBoxSize = (value: string) => {
   const lines = value.replace(/\r\n/g, "\n").split("\n");
-  const longest = Math.max(0, ...lines.map((line) => Array.from(line).length));
-  const width = clamp(Math.max(18, longest * 8.2 + 18), 18, 240);
-  const charsPerLine = Math.max(1, Math.floor((width - 18) / 8.2));
+  const horizontalInset = 7; // 2px padding on each side + 1.5px borders, with no extra visual slack.
+  const maxWidth = 240;
+  const widest = Math.max(0, ...lines.map(measureConnectionLabelLine));
+  const width = clamp(Math.max(14, widest + horizontalInset), 14, maxWidth);
+  const contentMax = Math.max(1, maxWidth - horizontalInset);
   const visualLines = lines.reduce(
-    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, Array.from(line).length) / charsPerLine)),
+    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, measureConnectionLabelLine(line)) / contentMax)),
     0
   );
   const height = clamp(visualLines * 18 + 12, 26, 160);
-  return { width: Math.round(width), height: Math.round(height) };
+  return { width: Math.ceil(width), height: Math.round(height) };
 };
 
 const rectsIntersect = (a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) =>
