@@ -387,3 +387,41 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+.note-group {
+  border: 1.5px solid color-mix(in oklab, var(--group-color) 40%, rgba(148, 163, 184, 0.42));
+  background: color-mix(in oklab, var(--group-color) 10%, rgba(148, 163, 184, 0.13));
+  border-radius: 26px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 18px 55px rgba(15,23,42,.08);
+  cursor: grab;
+  user-select: none;
+  backdrop-filter: blur(2px);
+}
+
+.note-group:active {
+  cursor: grabbing;
+}
+
+.note-group-selected {
+  border-color: color-mix(in oklab, var(--group-color) 75%, white 18%);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--group-color) 32%, transparent), 0 22px 70px rgba(15,23,42,.12);
+}
+
+.note-group-title {
+  position: absolute;
+  top: -13px;
+  right: 22px;
+  max-width: calc(100% - 44px);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  background: color-mix(in oklab, var(--surface-solid) 88%, var(--group-color) 12%);
+  border: 1px solid color-mix(in oklab, var(--group-color) 42%, var(--border));
+  box-shadow: 0 10px 28px rgba(15,23,42,.10);
+}

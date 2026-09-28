@@ -27,6 +27,14 @@ export interface NoteConnection {
   label?: string;
 }
 
+export interface NoteGroup {
+  id: string;
+  title: string;
+  noteIds: string[];
+  color: string; // palette id
+  createdAt: number;
+}
+
 export interface ViewState {
   x: number;
   y: number;
@@ -44,6 +52,7 @@ export type Theme = "dark" | "light";
 export interface PersistedState {
   notes: Note[];
   connections?: NoteConnection[];
+  groups?: NoteGroup[];
   view: ViewState;
   theme: Theme;
 }
