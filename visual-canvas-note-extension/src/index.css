@@ -120,6 +120,17 @@ body {
     0 0 0 2px color-mix(in srgb, var(--na) 55%, transparent),
     0 22px 55px -18px color-mix(in srgb, var(--na) 40%, rgba(0, 0, 0, 0.55));
 }
+.note-editing .note-inner {
+  border-color: color-mix(in srgb, var(--na) 85%, white 8%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--na) 62%, transparent),
+    0 0 0 8px color-mix(in srgb, var(--na) 16%, transparent),
+    0 24px 62px -20px color-mix(in srgb, var(--na) 45%, rgba(0, 0, 0, 0.58));
+}
+.note-editing .note-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 .note-title-input,
 .note-body-input {

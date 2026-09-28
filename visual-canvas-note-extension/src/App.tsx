@@ -545,7 +545,10 @@ export default function App() {
   const nearestConnector = useCallback(
     (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
       const p = worldPointFromScreen(clientX, clientY);
-      let best: { endpoint: Endpoint; d: number } | null = null;
+      const circleSnapPx = 42;
+      let circleBest: { endpoint: Endpoint; d: number } | null = null;
+      let insideBest: { endpoint: Endpoint; d: number } | null = null;
+
       for (const note of notesRef.current) {
         if (note.id === excludeId) continue;
         const { width, height } = noteSize(note);
@@ -553,6 +556,19 @@ export default function App() {
         const y1 = note.y;
         const x2 = note.x + width;
         const y2 = note.y + height;
+        const sides: ConnectionSide[] = ["top", "right", "bottom", "left"];
+
+        for (const side of sides) {
+          const sp = sidePoint(note, side);
+          const v = viewRef.current;
+          const sx = sp.x * v.zoom + v.x;
+          const sy = sp.y * v.zoom + v.y;
+          const d = Math.hypot(sx - clientX, sy - clientY);
+          if (d <= circleSnapPx && (!circleBest || d < circleBest.d)) {
+            circleBest = { endpoint: { noteId: note.id, side }, d };
+          }
+        }
+
         const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
         if (!inside) continue;
         const candidates: { side: ConnectionSide; d: number }[] = [
@@ -562,10 +578,12 @@ export default function App() {
           { side: "left", d: Math.abs(p.x - x1) },
         ];
         for (const c of candidates) {
-          if (!best || c.d < best.d) best = { endpoint: { noteId: note.id, side: c.side }, d: c.d };
+          if (!insideBest || c.d < insideBest.d) {
+            insideBest = { endpoint: { noteId: note.id, side: c.side }, d: c.d };
+          }
         }
       }
-      return best?.endpoint ?? null;
+      return circleBest?.endpoint ?? insideBest?.endpoint ?? null;
     },
     [worldPointFromScreen]
   );
@@ -681,6 +699,7 @@ export default function App() {
       if ((e.target as HTMLElement).closest("[data-ui]")) return;
       setMenu(null);
       setConnectionPrompt(null);
+      setEditingId(null);
       const v = viewRef.current;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (e.button === 2 || e.pointerType === "touch") {
@@ -1106,8 +1125,8 @@ export default function App() {
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible pointer-events-none z-0" width="1" height="1">
           <defs>
-            <marker id="note-arrow" markerWidth="5" markerHeight="5" refX="4.25" refY="2.5" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 5 2.5 L 0 5 z" fill={CONNECTION_COLOR} />
+            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill={CONNECTION_COLOR} />
             </marker>
           </defs>
           {connections.map((c) => {
