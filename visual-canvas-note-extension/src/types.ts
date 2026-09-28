@@ -1,4 +1,5 @@
 export type ConnectionSide = "top" | "right" | "bottom" | "left";
+export type ConnectionDirection = "none" | "forward" | "both";
 
 export interface Note {
   id: string;
@@ -21,6 +22,9 @@ export interface NoteConnection {
   id: string;
   from: NoteConnectionEndpoint;
   to: NoteConnectionEndpoint;
+  direction?: ConnectionDirection;
+  color?: string;
+  label?: string;
 }
 
 export interface ViewState {

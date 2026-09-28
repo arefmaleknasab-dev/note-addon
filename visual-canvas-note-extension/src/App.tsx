@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeftRight,
+  ArrowRight,
+  Ban,
   Clipboard,
   ClipboardCopy,
   ClipboardPaste,
@@ -25,6 +28,7 @@ import {
   Minus,
   Moon,
   MousePointer2,
+  Palette,
   Pilcrow,
   Plus,
   Quote,
@@ -39,7 +43,7 @@ import ContextMenu, { type MenuRow } from "./components/ContextMenu";
 import Toolbar from "./components/Toolbar";
 import EmptyState from "./components/EmptyState";
 import { ToastStack, useToasts } from "./components/Toasts";
-import type { ConnectionSide, Note, NoteConnection, Theme, ViewState } from "./types";
+import type { ConnectionDirection, ConnectionSide, Note, NoteConnection, Theme, ViewState } from "./types";
 import {
   clearPendingNotes,
   getPendingNotes,
@@ -67,6 +71,17 @@ import { faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const CONNECTION_COLOR = "#8b95a7";
+const CONNECTION_COLORS = [
+  { name: "خاکستری", hex: "#8b95a7" },
+  { name: "کهربایی", hex: "#f5a623" },
+  { name: "صورتی", hex: "#fb7185" },
+  { name: "آبی", hex: "#38bdf8" },
+  { name: "سبز", hex: "#34d399" },
+  { name: "بنفش", hex: "#a78bfa" },
+];
+
+const connectionColor = (connection: NoteConnection) => connection.color || CONNECTION_COLOR;
+const connectionDirection = (connection: NoteConnection): ConnectionDirection => connection.direction ?? "forward";
 
 type Gesture =
   | { type: "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean }
@@ -83,8 +98,8 @@ type Gesture =
 
 type Point = { x: number; y: number };
 type Endpoint = { noteId: string; side: ConnectionSide };
-type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null };
-type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point };
+type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null; rerouteId?: string };
+type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point; rerouteId?: string };
 
 const sideVector = (side: ConnectionSide): Point => {
   switch (side) {
@@ -152,13 +167,20 @@ const estimateNoteSize = (text: string) => {
   return { width: Math.round(width), height: Math.round(height) };
 };
 
+const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+const rectsIntersect = (a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) =>
+  a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [connections, setConnections] = useState<NoteConnection[]>([]);
   const [draftConnection, setDraftConnection] = useState<DraftConnection | null>(null);
   const [connectionPrompt, setConnectionPrompt] = useState<ConnectionPrompt | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedConnections, setSelectedConnections] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark"); // dark by default
   const [loaded, setLoaded] = useState(false);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
@@ -380,6 +402,13 @@ export default function App() {
     redoStack.current = [];
     setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
     setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
+    const relatedIds = new Set(related.map((c) => c.id));
+    setSelectedConnections((prev) => {
+      const s = new Set(prev);
+      relatedIds.forEach((id) => s.delete(id));
+      return s;
+    });
+    setEditingConnectionId((id) => (id && relatedIds.has(id) ? null : id));
     setEditingId((id) => (id && idSet.has(id) ? null : id));
     setSelected((prev) => {
       const s = new Set(prev);
@@ -465,8 +494,37 @@ export default function App() {
           c.to.side === to.side
       );
       if (exists) return prev;
-      return [...prev, { id: uid(), from, to }];
+      return [...prev, { id: uid(), from, to, direction: "forward" }];
     });
+  }, []);
+
+  const updateConnection = useCallback((id: string, patch: Partial<NoteConnection>) => {
+    setConnections((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }, []);
+
+  const deleteConnectionIds = useCallback(
+    (ids: string[]) => {
+      const idSet = new Set(ids);
+      if (!idSet.size) return;
+      setConnections((prev) => prev.filter((c) => !idSet.has(c.id)));
+      setSelectedConnections((prev) => {
+        const s = new Set(prev);
+        ids.forEach((id) => s.delete(id));
+        return s;
+      });
+      setEditingConnectionId((id) => (id && idSet.has(id) ? null : id));
+      push("info", ids.length > 1 ? `${faNum(ids.length)} اتصال حذف شد` : "اتصال حذف شد");
+    },
+    [push]
+  );
+
+  const connectionPoints = useCallback((connection: NoteConnection): { from: Point; to: Point; mid: Point } | null => {
+    const fromNote = notesRef.current.find((n) => n.id === connection.from.noteId);
+    const toNote = notesRef.current.find((n) => n.id === connection.to.noteId);
+    if (!fromNote || !toNote) return null;
+    const from = sidePoint(fromNote, connection.from.side);
+    const to = sidePoint(toNote, connection.to.side);
+    return { from, to, mid: midpoint(from, to) };
   }, []);
 
   const selectedNotes = useCallback(
@@ -545,7 +603,7 @@ export default function App() {
   const nearestConnector = useCallback(
     (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
       const p = worldPointFromScreen(clientX, clientY);
-      const circleSnapPx = 42;
+      const circleSnapPx = 24;
       let circleBest: { endpoint: Endpoint; d: number } | null = null;
       let insideBest: { endpoint: Endpoint; d: number } | null = null;
 
@@ -595,6 +653,17 @@ export default function App() {
       e.stopPropagation();
       setMenu(null);
       setConnectionPrompt(null);
+      const reroute = draftConnection?.rerouteId ? draftConnection : null;
+      if (reroute) {
+        const target = { noteId: id, side };
+        if (target.noteId !== reroute.from.noteId) {
+          updateConnection(reroute.rerouteId!, { from: reroute.from, to: target });
+          setSelectedConnections(new Set([reroute.rerouteId!]));
+          push("success", "مسیر اتصال به نقطه‌ی جدید وصل شد");
+        }
+        setDraftConnection(null);
+        return;
+      }
       const from = { noteId: id, side };
       const start = sidePoint(notesRef.current.find((n) => n.id === id)!, side);
       const move = (ev: PointerEvent) => {
@@ -625,7 +694,7 @@ export default function App() {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     },
-    [addConnection, endpointPoint, nearestConnector, push, worldPointFromScreen]
+    [addConnection, draftConnection, endpointPoint, nearestConnector, push, updateConnection, worldPointFromScreen]
   );
 
   const addConnectedNoteFromPrompt = useCallback(() => {
@@ -652,20 +721,27 @@ export default function App() {
     }
     const note = createNote({ id, x: Math.round(x), y: Math.round(y), color: "violet" });
     setNotes((prev) => [...prev, note]);
-    addConnection(prompt.from, { noteId: id, side: newSide });
+    const newEndpoint = { noteId: id, side: newSide };
+    if (prompt.rerouteId) {
+      updateConnection(prompt.rerouteId, { from: prompt.from, to: newEndpoint });
+      setSelectedConnections(new Set([prompt.rerouteId]));
+    } else {
+      addConnection(prompt.from, newEndpoint);
+    }
     setSelected(new Set([id]));
     setAutoFocusId(id);
     setRecentId(id);
     setConnectionPrompt(null);
     window.setTimeout(() => setAutoFocusId(null), 1600);
     window.setTimeout(() => setRecentId(null), 2600);
-  }, [addConnection, connectionPrompt]);
+  }, [addConnection, connectionPrompt, updateConnection]);
 
   const onNoteDragStart = useCallback(
     (e: React.PointerEvent, id: string) => {
       if (e.button !== 0) return;
       e.stopPropagation();
       setMenu(null);
+      setEditingConnectionId(null);
       if (e.ctrlKey || e.metaKey) {
         setSelected((prev) => {
           const s = new Set(prev);
@@ -676,6 +752,7 @@ export default function App() {
         return;
       }
       let ids: string[];
+      setSelectedConnections(new Set());
       if (selected.has(id)) ids = [...selected];
       else {
         ids = [id];
@@ -697,9 +774,31 @@ export default function App() {
       if ((e.target as HTMLElement).closest("[data-note]")) return;
       if ((e.target as HTMLElement).closest("input, textarea, a, button")) return;
       if ((e.target as HTMLElement).closest("[data-ui]")) return;
+      if (draftConnection?.rerouteId && e.button === 0) {
+        const target = nearestConnector(e.clientX, e.clientY, draftConnection.from.noteId);
+        if (target) {
+          updateConnection(draftConnection.rerouteId, { from: draftConnection.from, to: target });
+          setSelectedConnections(new Set([draftConnection.rerouteId]));
+          push("success", "مسیر اتصال تغییر کرد");
+          setDraftConnection(null);
+        } else {
+          const to = worldPointFromScreen(e.clientX, e.clientY);
+          setConnectionPrompt({
+            x: clamp(e.clientX, 12, window.innerWidth - 190),
+            y: clamp(e.clientY, 12, window.innerHeight - 64),
+            from: draftConnection.from,
+            to,
+            rerouteId: draftConnection.rerouteId,
+          });
+          setDraftConnection(null);
+        }
+        e.preventDefault();
+        return;
+      }
       setMenu(null);
       setConnectionPrompt(null);
       setEditingId(null);
+      setEditingConnectionId(null);
       const v = viewRef.current;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (e.button === 2 || e.pointerType === "touch") {
@@ -707,6 +806,7 @@ export default function App() {
         document.body.classList.add("grabbing");
       } else if (e.button === 0) {
         const additive = e.ctrlKey || e.metaKey;
+        if (!additive) setSelectedConnections(new Set());
         gesture.current = {
           type: "select",
           sx: e.clientX,
@@ -718,12 +818,23 @@ export default function App() {
         document.body.classList.add("selecting");
       }
     },
-    [selected]
+    [draftConnection, nearestConnector, push, selected, updateConnection, worldPointFromScreen]
   );
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const g = gesture.current;
-    if (!g) return;
+    if (!g) {
+      if (draftConnection?.rerouteId) {
+        const target = nearestConnector(e.clientX, e.clientY, draftConnection.from.noteId);
+        const targetPoint = target ? endpointPoint(target) : null;
+        setDraftConnection({
+          ...draftConnection,
+          target,
+          to: targetPoint ?? worldPointFromScreen(e.clientX, e.clientY),
+        });
+      }
+      return;
+    }
     const v = viewRef.current;
     if (g.type === "pan") {
       const dx = e.clientX - g.sx;
@@ -760,7 +871,25 @@ export default function App() {
         const sh = height * v.zoom;
         if (sx < rect.x2 && sx + sw > rect.x1 && sy < rect.y2 && sy + sh > rect.y1) hits.push(n.id);
       }
+      const connectionHits: string[] = [];
+      for (const c of connectionsRef.current) {
+        const pts = connectionPoints(c);
+        if (!pts) continue;
+        const sx1 = pts.from.x * v.zoom + v.x;
+        const sy1 = pts.from.y * v.zoom + v.y;
+        const sx2 = pts.to.x * v.zoom + v.x;
+        const sy2 = pts.to.y * v.zoom + v.y;
+        const pad = 12;
+        const box = {
+          x1: Math.min(sx1, sx2) - pad,
+          y1: Math.min(sy1, sy2) - pad,
+          x2: Math.max(sx1, sx2) + pad,
+          y2: Math.max(sy1, sy2) + pad,
+        };
+        if (rectsIntersect(rect, box)) connectionHits.push(c.id);
+      }
       setSelected(new Set([...g.base, ...hits]));
+      setSelectedConnections(new Set(connectionHits));
     } else if (g.type === "note") {
       const dx = (e.clientX - g.sx) / v.zoom;
       const dy = (e.clientY - g.sy) / v.zoom;
@@ -777,7 +906,7 @@ export default function App() {
         )
       );
     }
-  }, [applyView]);
+  }, [applyView, connectionPoints, draftConnection, endpointPoint, nearestConnector, worldPointFromScreen]);
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
@@ -792,7 +921,10 @@ export default function App() {
         }
       } else if (g.type === "select") {
         if (selRectRef.current) selRectRef.current.style.display = "none";
-        if (!g.moved && !g.additive) setSelected(new Set());
+        if (!g.moved && !g.additive) {
+          setSelected(new Set());
+          setSelectedConnections(new Set());
+        }
       } else if (g.type === "note") {
         if (g.moved) {
           const v = viewRef.current;
@@ -830,9 +962,10 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, [contenteditable]")) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selected.size) {
+      if ((e.key === "Delete" || e.key === "Backspace") && (selected.size || selectedConnections.size)) {
         e.preventDefault();
-        deleteIds([...selected]);
+        if (selected.size) deleteIds([...selected]);
+        else deleteConnectionIds([...selectedConnections]);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undoDelete();
@@ -844,7 +977,10 @@ export default function App() {
         setConnectionPrompt(null);
         setDeletePrompt(null);
         setEditingId(null);
+        setEditingConnectionId(null);
+        setDraftConnection(null);
         setSelected(new Set());
+        setSelectedConnections(new Set());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         setSelected(new Set(notesRef.current.map((n) => n.id)));
@@ -852,7 +988,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, deleteIds, undoDelete, redoDelete]);
+  }, [selected, selectedConnections, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
 
   /* -------------------------- context menus ------------------------- */
   const clampMenu = (x: number, y: number, estH: number) => ({
@@ -1041,6 +1177,20 @@ export default function App() {
     [addNoteAt, arrangeGrid, fitView, applyView, persistSoon]
   );
 
+  const beginRerouteConnection = useCallback(
+    (id: string) => {
+      const c = connectionsRef.current.find((x) => x.id === id);
+      if (!c) return;
+      const pts = connectionPoints(c);
+      if (!pts) return;
+      setSelected(new Set());
+      setSelectedConnections(new Set([id]));
+      setDraftConnection({ from: c.from, to: pts.to, target: c.to, rerouteId: id });
+      push("info", "برای تغییر مسیر اتصال، روی نقطه‌ی اتصال مقصد کلیک کنید یا روی بوم کلیک کنید تا یادداشت جدید بسازید");
+    },
+    [connectionPoints, push]
+  );
+
   const onNoteContextMenu = useCallback(
     (e: React.MouseEvent, id: string) => {
       let ids = [...selected];
@@ -1077,6 +1227,34 @@ export default function App() {
       setMenu({ ...clampMenu(e.clientX, e.clientY, 330), rows });
     },
     [selected, copySeparate, copyAll, copyNoteById, duplicateIds, deleteIds]
+  );
+
+  const onConnectionContextMenu = useCallback(
+    (e: React.MouseEvent, id: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const connection = connectionsRef.current.find((c) => c.id === id);
+      if (!connection) return;
+      setSelected(new Set());
+      setSelectedConnections(new Set([id]));
+      const colorRows: MenuRow[] = CONNECTION_COLORS.map((color) => ({
+        icon: Palette,
+        label: color.name,
+        onClick: () => updateConnection(id, { color: color.hex }),
+      }));
+      const rows: MenuRow[] = [
+        { type: "label", text: "اتصال" },
+        { icon: Ban, label: "فلش بدون جهت", onClick: () => updateConnection(id, { direction: "none" }) },
+        { icon: ArrowRight, label: "فلش تک‌جهته", onClick: () => updateConnection(id, { direction: "forward" }) },
+        { icon: ArrowLeftRight, label: "فلش دوجهته", onClick: () => updateConnection(id, { direction: "both" }) },
+        { type: "submenu", icon: Palette, label: "تغییر رنگ", rows: colorRows },
+        { type: "sep" },
+        { icon: MousePointer2, label: "پی گرفتن اتصال", onClick: () => beginRerouteConnection(id) },
+        { icon: Trash2, label: "حذف اتصال", danger: true, onClick: () => deleteConnectionIds([id]) },
+      ];
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 360), rows });
+    },
+    [beginRerouteConnection, clampMenu, deleteConnectionIds, updateConnection]
   );
 
   const onRootContextMenu = useCallback(
@@ -1123,27 +1301,67 @@ export default function App() {
 
       {/* world */}
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
-        <svg className="absolute left-0 top-0 overflow-visible pointer-events-none z-0" width="1" height="1">
+        <svg className="absolute left-0 top-0 overflow-visible z-0" width="1" height="1">
           <defs>
             <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 6 3 L 0 6 z" fill={CONNECTION_COLOR} />
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
+            </marker>
+            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="0.9" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
           </defs>
           {connections.map((c) => {
             const from = endpointPoint(c.from);
             const to = endpointPoint(c.to);
             if (!from || !to) return null;
+            const d = connectionPath(from, c.from.side, to, c.to.side);
+            const isSelected = selectedConnections.has(c.id);
+            const direction = connectionDirection(c);
+            const color = connectionColor(c);
+            const selectConnection = (event: React.MouseEvent<SVGPathElement>) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelected(new Set());
+              setEditingId(null);
+              setSelectedConnections((prev) => {
+                if (event.ctrlKey || event.metaKey) {
+                  const next = new Set(prev);
+                  if (next.has(c.id)) next.delete(c.id);
+                  else next.add(c.id);
+                  return next;
+                }
+                return new Set([c.id]);
+              });
+            };
             return (
-              <path
-                key={c.id}
-                d={connectionPath(from, c.from.side, to, c.to.side)}
-                fill="none"
-                stroke={CONNECTION_COLOR}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                markerEnd="url(#note-arrow)"
-                opacity={0.9}
-              />
+              <g key={c.id}>
+                <path
+                  d={d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={18}
+                  strokeLinecap="round"
+                  style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={selectConnection}
+                  onDoubleClick={(event) => {
+                    selectConnection(event);
+                    setEditingConnectionId(c.id);
+                  }}
+                  onContextMenu={(event) => onConnectionContextMenu(event, c.id)}
+                />
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={isSelected ? 4 : 2.5}
+                  strokeLinecap="round"
+                  markerStart={direction === "both" ? "url(#note-arrow-start)" : undefined}
+                  markerEnd={direction === "forward" || direction === "both" ? "url(#note-arrow)" : undefined}
+                  opacity={isSelected ? 1 : 0.9}
+                  style={{ pointerEvents: "none", filter: isSelected ? "drop-shadow(0 0 5px rgba(139,149,167,.55))" : undefined }}
+                />
+              </g>
             );
           })}
           {draftConnection && (() => {
@@ -1181,6 +1399,56 @@ export default function App() {
             );
           })()}
         </svg>
+        {connections.map((c) => {
+          const pts = connectionPoints(c);
+          if (!pts) return null;
+          const show = c.label || selectedConnections.has(c.id) || editingConnectionId === c.id;
+          if (!show) return null;
+          const color = connectionColor(c);
+          return (
+            <div
+              key={`label-${c.id}`}
+              data-connection-label
+              className="absolute z-30 -translate-x-1/2 -translate-y-1/2 pointer-events-auto"
+              style={{ left: pts.mid.x, top: pts.mid.y }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelected(new Set());
+                setSelectedConnections(new Set([c.id]));
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setEditingConnectionId(c.id);
+                setSelectedConnections(new Set([c.id]));
+              }}
+              onContextMenu={(e) => onConnectionContextMenu(e, c.id)}
+            >
+              {editingConnectionId === c.id ? (
+                <input
+                  autoFocus
+                  dir="auto"
+                  value={c.label ?? ""}
+                  placeholder="متن اتصال…"
+                  className="connection-label-input"
+                  style={{ borderColor: color }}
+                  onChange={(e) => updateConnection(c.id, { label: e.target.value })}
+                  onBlur={() => setEditingConnectionId(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === "Escape") setEditingConnectionId(null);
+                  }}
+                />
+              ) : (
+                <button
+                  className={`connection-label ${selectedConnections.has(c.id) ? "connection-label-selected" : ""}`}
+                  style={{ borderColor: color, color }}
+                >
+                  {c.label || "افزودن نوشته"}
+                </button>
+              )}
+            </div>
+          );
+        })}
         {notes.map((n) => (
           <NoteCard
             key={n.id}
