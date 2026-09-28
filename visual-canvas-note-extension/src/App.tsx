@@ -1319,16 +1319,10 @@ export default function App() {
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible z-0" width="1" height="1">
           <defs>
-            <marker
-              id="note-arrow"
-              markerWidth="6"
-              markerHeight="6"
-              refX="5.4"
-              refY="3"
-              orient="auto"
-              markerUnits="userSpaceOnUse"
-              viewBox="0 0 6 6"
-            >
+            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
+            </marker>
+            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="0.9" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
               <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
           </defs>
@@ -1336,7 +1330,6 @@ export default function App() {
             const pts = connectionPoints(c);
             if (!pts) return null;
             const d = connectionPath(pts.drawFrom, c.from.side, pts.drawTo, c.to.side);
-            const reverseD = connectionPath(pts.drawTo, c.to.side, pts.drawFrom, c.from.side);
             const isSelected = selectedConnections.has(c.id);
             const direction = connectionDirection(c);
             const color = connectionColor(c);
@@ -1392,22 +1385,12 @@ export default function App() {
                   stroke={color}
                   strokeWidth={2.5}
                   strokeLinecap="round"
+                  markerStart={direction === "both" ? "url(#note-arrow-start)" : undefined}
                   markerEnd={direction === "forward" || direction === "both" ? "url(#note-arrow)" : undefined}
                   opacity={isSelected ? 1 : 0.9}
                   style={{ pointerEvents: "none", filter: isSelected ? "drop-shadow(0 0 5px rgba(139,149,167,.5))" : undefined }}
                 />
-                {direction === "both" && (
-                  <path
-                    d={reverseD}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={0.01}
-                    strokeLinecap="round"
-                    markerEnd="url(#note-arrow)"
-                    opacity={isSelected ? 1 : 0.9}
-                    style={{ pointerEvents: "none" }}
-                  />
-                )}
+
               </g>
             );
           })}
