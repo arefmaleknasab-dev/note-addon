@@ -164,6 +164,7 @@ export default function App() {
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [recentId, setRecentId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
+  const [deletePrompt, setDeletePrompt] = useState<string[] | null>(null);
   const [zoomLabel, setZoomLabel] = useState(1);
   const [copyJob, setCopyJob] = useState<{ done: number; total: number } | null>(null);
   const copyingRef = useRef(false);
@@ -356,36 +357,40 @@ export default function App() {
     window.setTimeout(() => setAutoFocusId(null), 1600);
   }, []);
 
-  const deleteIds = useCallback(
-    (ids: string[]) => {
-      const unique = [...new Set(ids)];
-      if (!unique.length) return;
-      const idSet = new Set(unique);
-      const doomed = notesRef.current.filter((n) => idSet.has(n.id));
-      if (!doomed.length) return;
-      const ok = window.confirm(
-        doomed.length > 1
-          ? `آیا از حذف ${faNum(doomed.length)} یادداشت مطمئن هستید؟`
-          : "آیا از حذف این یادداشت مطمئن هستید؟"
-      );
-      if (!ok) return;
-      const related = connectionsRef.current.filter(
-        (c) => idSet.has(c.from.noteId) || idSet.has(c.to.noteId)
-      );
-      undoStack.current.push({ notes: doomed, connections: related });
-      redoStack.current = [];
-      setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
-      setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
-      setEditingId((id) => (id && idSet.has(id) ? null : id));
-      setSelected((prev) => {
-        const s = new Set(prev);
-        unique.forEach((id) => s.delete(id));
-        return s;
-      });
-      push("info", doomed.length > 1 ? `${faNum(doomed.length)} یادداشت حذف شد` : "یادداشت حذف شد");
-    },
-    [push]
-  );
+  const deleteIds = useCallback((ids: string[]) => {
+    const unique = [...new Set(ids)].filter((id) => notesRef.current.some((n) => n.id === id));
+    if (!unique.length) return;
+    setMenu(null);
+    setDeletePrompt(unique);
+  }, []);
+
+  const confirmDelete = useCallback(() => {
+    const unique = deletePrompt;
+    if (!unique?.length) return;
+    const idSet = new Set(unique);
+    const doomed = notesRef.current.filter((n) => idSet.has(n.id));
+    if (!doomed.length) {
+      setDeletePrompt(null);
+      return;
+    }
+    const related = connectionsRef.current.filter(
+      (c) => idSet.has(c.from.noteId) || idSet.has(c.to.noteId)
+    );
+    undoStack.current.push({ notes: doomed, connections: related });
+    redoStack.current = [];
+    setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
+    setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
+    setEditingId((id) => (id && idSet.has(id) ? null : id));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      unique.forEach((id) => s.delete(id));
+      return s;
+    });
+    setDeletePrompt(null);
+    push("info", doomed.length > 1 ? `${faNum(doomed.length)} یادداشت حذف شد` : "یادداشت حذف شد");
+  }, [deletePrompt, push]);
+
+  const cancelDelete = useCallback(() => setDeletePrompt(null), []);
 
   const undoDelete = useCallback(() => {
     const snap = undoStack.current.pop();
@@ -539,9 +544,7 @@ export default function App() {
 
   const nearestConnector = useCallback(
     (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
-      const v = viewRef.current;
       const p = worldPointFromScreen(clientX, clientY);
-      const snap = 34 / v.zoom;
       let best: { endpoint: Endpoint; d: number } | null = null;
       for (const note of notesRef.current) {
         if (note.id === excludeId) continue;
@@ -550,14 +553,15 @@ export default function App() {
         const y1 = note.y;
         const x2 = note.x + width;
         const y2 = note.y + height;
-        const candidates: { side: ConnectionSide; d: number; inRange: boolean }[] = [
-          { side: "top", d: Math.abs(p.y - y1), inRange: p.x >= x1 - snap && p.x <= x2 + snap },
-          { side: "right", d: Math.abs(p.x - x2), inRange: p.y >= y1 - snap && p.y <= y2 + snap },
-          { side: "bottom", d: Math.abs(p.y - y2), inRange: p.x >= x1 - snap && p.x <= x2 + snap },
-          { side: "left", d: Math.abs(p.x - x1), inRange: p.y >= y1 - snap && p.y <= y2 + snap },
+        const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
+        if (!inside) continue;
+        const candidates: { side: ConnectionSide; d: number }[] = [
+          { side: "top", d: Math.abs(p.y - y1) },
+          { side: "right", d: Math.abs(p.x - x2) },
+          { side: "bottom", d: Math.abs(p.y - y2) },
+          { side: "left", d: Math.abs(p.x - x1) },
         ];
         for (const c of candidates) {
-          if (!c.inRange || c.d > snap) continue;
           if (!best || c.d < best.d) best = { endpoint: { noteId: note.id, side: c.side }, d: c.d };
         }
       }
@@ -819,6 +823,7 @@ export default function App() {
       } else if (e.key === "Escape") {
         setMenu(null);
         setConnectionPrompt(null);
+        setDeletePrompt(null);
         setEditingId(null);
         setSelected(new Set());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
@@ -1101,8 +1106,8 @@ export default function App() {
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible pointer-events-none z-0" width="1" height="1">
           <defs>
-            <marker id="note-arrow" markerWidth="4" markerHeight="4" refX="3.4" refY="2" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 4 2 L 0 4 z" fill={CONNECTION_COLOR} />
+            <marker id="note-arrow" markerWidth="5" markerHeight="5" refX="4.25" refY="2.5" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 5 2.5 L 0 5 z" fill={CONNECTION_COLOR} />
             </marker>
           </defs>
           {connections.map((c) => {
@@ -1226,6 +1231,49 @@ export default function App() {
             >
               <Plus size={15} style={{ color: "var(--accent)" }} /> افزودن یادداشت
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deletePrompt && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelDelete}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-sm shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">حذف یادداشت</h3>
+              <p className="text-[12.5px] leading-6 mb-5" style={{ color: "var(--text-dim)" }}>
+                {deletePrompt.length > 1
+                  ? `آیا از حذف ${faNum(deletePrompt.length)} یادداشت مطمئن هستید؟`
+                  : "آیا از حذف این یادداشت مطمئن هستید؟"}
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelDelete}
+                >
+                  لغو
+                </button>
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-rose-500 hover:bg-rose-600 transition-colors cursor-pointer"
+                  onClick={confirmDelete}
+                >
+                  حذف
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

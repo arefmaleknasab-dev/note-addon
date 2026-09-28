@@ -135,6 +135,13 @@ function NoteCard({
       }
 
       next = { x, y, width: w, height: h };
+      const patch = {
+        x: Math.round(x),
+        y: Math.round(y),
+        width: Math.round(w),
+        height: Math.round(h),
+      };
+      onChange(note.id, patch);
       if (el) {
         el.style.width = `${w}px`;
         el.style.height = `${h}px`;
@@ -268,7 +275,7 @@ function NoteCard({
             placeholder="عنوان یادداشت…"
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
-            className="note-title-input text-[14.5px] font-bold leading-6 px-1"
+            className={`note-title-input text-[14.5px] font-bold leading-6 px-1 ${editing ? "cursor-text" : "cursor-grab select-none"}`}
             onChange={(e) => onChange(note.id, { title: e.target.value })}
             onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "title") : openNoteMenu(e))}
             onPointerDown={(e) => {
@@ -323,7 +330,7 @@ function NoteCard({
             placeholder="متن خود را بنویسید…"
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
-            className="note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto"
+            className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}
             rows={2}
             onChange={(e) => onChange(note.id, { text: e.target.value })}
             onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "text") : openNoteMenu(e))}

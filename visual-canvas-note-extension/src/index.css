@@ -136,6 +136,16 @@ body {
   color: var(--text-dim);
   opacity: 0.6;
 }
+[data-note]:not([data-editing="true"]) .note-title-input,
+[data-note]:not([data-editing="true"]) .note-body-input {
+  cursor: grab !important;
+  caret-color: transparent;
+  user-select: none;
+}
+[data-note]:not([data-editing="true"]):active .note-title-input,
+[data-note]:not([data-editing="true"]):active .note-body-input {
+  cursor: grabbing !important;
+}
 
 .note-actions {
   opacity: 0;
