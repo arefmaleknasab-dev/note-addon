@@ -177,13 +177,13 @@ const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y +
 const connectionLabelBoxSize = (value: string) => {
   const lines = value.replace(/\r\n/g, "\n").split("\n");
   const longest = Math.max(0, ...lines.map((line) => Array.from(line).length));
-  const width = clamp(Math.max(32, longest * 8.2 + 30), 32, 240);
+  const width = clamp(Math.max(18, longest * 8.2 + 18), 18, 240);
   const charsPerLine = Math.max(1, Math.floor((width - 18) / 8.2));
   const visualLines = lines.reduce(
     (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, Array.from(line).length) / charsPerLine)),
     0
   );
-  const height = clamp(visualLines * 18 + 14, 30, 160);
+  const height = clamp(visualLines * 18 + 12, 26, 160);
   return { width: Math.round(width), height: Math.round(height) };
 };
 

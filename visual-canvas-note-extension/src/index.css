@@ -180,10 +180,11 @@ body {
 }
 .connection-label,
 .connection-label-input {
-  min-width: 32px;
+  box-sizing: border-box;
+  min-width: 18px;
   max-width: 240px;
-  min-height: 30px;
-  padding: 5px 8px;
+  min-height: 26px;
+  padding: 5px 6px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
   background: var(--surface-solid);
@@ -207,10 +208,12 @@ body {
 }
 .connection-label-input {
   display: block;
+  padding-inline: 2px;
   resize: none;
   overflow: hidden;
   outline: none;
   caret-color: currentColor;
+  appearance: none;
 }
 .connection-label-shell-selected .connection-label,
 .connection-label-input:focus {
