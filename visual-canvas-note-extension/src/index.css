@@ -180,10 +180,10 @@ body {
 }
 .connection-label,
 .connection-label-input {
-  min-width: 88px;
+  min-width: 32px;
   max-width: 240px;
-  min-height: 34px;
-  padding: 7px 10px;
+  min-height: 30px;
+  padding: 5px 8px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
   background: var(--surface-solid);
@@ -191,22 +191,24 @@ body {
   font-family: inherit;
   font-size: 11.5px;
   font-weight: 800;
-  line-height: 1.55;
-  text-align: start;
+  line-height: 18px;
+  text-align: center;
   white-space: pre-wrap;
   box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
 .connection-label {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   user-select: text;
 }
 .connection-label-input {
-  width: 180px;
+  display: block;
   resize: none;
-  overflow: auto;
+  overflow: hidden;
   outline: none;
   caret-color: currentColor;
 }

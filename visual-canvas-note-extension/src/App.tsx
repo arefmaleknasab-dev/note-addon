@@ -174,6 +174,19 @@ const estimateNoteSize = (text: string) => {
 
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
+const connectionLabelBoxSize = (value: string) => {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  const longest = Math.max(0, ...lines.map((line) => Array.from(line).length));
+  const width = clamp(Math.max(32, longest * 8.2 + 30), 32, 240);
+  const charsPerLine = Math.max(1, Math.floor((width - 18) / 8.2));
+  const visualLines = lines.reduce(
+    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, Array.from(line).length) / charsPerLine)),
+    0
+  );
+  const height = clamp(visualLines * 18 + 14, 30, 160);
+  return { width: Math.round(width), height: Math.round(height) };
+};
+
 const rectsIntersect = (a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) =>
   a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
 
@@ -1438,7 +1451,7 @@ export default function App() {
           const isLabelSelected = selectedConnectionLabelId === c.id;
           const labelValue = c.label ?? "";
           const labelDir = labelValue.trim() ? "auto" : "rtl";
-          const labelRows = Math.min(6, Math.max(1, labelValue.split("\n").length));
+          const labelBox = connectionLabelBoxSize(labelValue);
           return (
             <div
               key={`label-${c.id}`}
@@ -1472,9 +1485,9 @@ export default function App() {
                   autoFocus
                   dir={labelDir}
                   value={labelValue}
-                  rows={labelRows}
+                  rows={1}
                   className="connection-label-input"
-                  style={{ borderColor: color, color }}
+                  style={{ borderColor: color, color, width: labelBox.width, height: labelBox.height }}
                   onChange={(e) => updateConnection(c.id, { label: e.target.value })}
                   onBlur={() => finishConnectionLabelEdit(c.id)}
                   onKeyDown={(e) => {
@@ -1490,7 +1503,7 @@ export default function App() {
                   type="button"
                   className="connection-label"
                   dir={labelDir}
-                  style={{ borderColor: color, color }}
+                  style={{ borderColor: color, color, width: labelBox.width, minHeight: labelBox.height }}
                 >
                   {labelValue}
                 </button>
