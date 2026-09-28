@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { PALETTE } from "../lib/constants";
+import { PALETTE, type PaletteColor } from "../lib/constants";
 
 export interface MenuEntry {
   type?: "item";
@@ -17,7 +17,7 @@ export interface MenuEntry {
 export type MenuRow =
   | MenuEntry
   | { type: "sep" }
-  | { type: "swatches"; current: string; onPick: (id: string) => void }
+  | { type: "swatches"; current: string; onPick: (id: string) => void; colors?: PaletteColor[] }
   | { type: "label"; text: string }
   | { type: "submenu"; icon: LucideIcon; label: string; rows: MenuRow[]; disabled?: boolean };
 
@@ -40,29 +40,34 @@ function MenuRows({ rows, onClose }: { rows: MenuRow[]; onClose: () => void }) {
               {row.text}
             </div>
           );
-        if (row.type === "swatches")
+        if (row.type === "swatches") {
+          const colors = row.colors ?? PALETTE;
           return (
             <div key={i} className="flex items-center gap-1.5 px-3 py-2">
-              {PALETTE.map((c) => (
-                <button
-                  key={c.id}
-                  title={c.name}
-                  className="w-[18px] h-[18px] rounded-full transition-transform hover:scale-125 cursor-pointer"
-                  style={{
-                    background: c.hex,
-                    boxShadow:
-                      row.current === c.id
+              {colors.map((c) => {
+                const isCurrent =
+                  row.current === c.id || row.current.toLowerCase() === c.hex.toLowerCase();
+                return (
+                  <button
+                    key={c.id}
+                    title={c.name}
+                    className="w-[18px] h-[18px] rounded-full transition-transform hover:scale-125 cursor-pointer"
+                    style={{
+                      background: c.hex,
+                      boxShadow: isCurrent
                         ? `0 0 0 2px var(--surface-solid), 0 0 0 4px ${c.hex}`
                         : "inset 0 -2px 3px rgba(0,0,0,.22)",
-                  }}
-                  onClick={() => {
-                    row.onPick(c.id);
-                    onClose();
-                  }}
-                />
-              ))}
+                    }}
+                    onClick={() => {
+                      row.onPick(c.id);
+                      onClose();
+                    }}
+                  />
+                );
+              })}
             </div>
           );
+        }
 
         if (row.type === "submenu") {
           const Icon = row.icon;

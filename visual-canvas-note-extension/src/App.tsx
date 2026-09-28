@@ -28,7 +28,6 @@ import {
   Minus,
   Moon,
   MousePointer2,
-  Palette,
   Pilcrow,
   Plus,
   Quote,
@@ -98,8 +97,8 @@ type Gesture =
 
 type Point = { x: number; y: number };
 type Endpoint = { noteId: string; side: ConnectionSide };
-type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null; rerouteId?: string };
-type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point; rerouteId?: string };
+type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null };
+type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point };
 
 const sideVector = (side: ConnectionSide): Point => {
   switch (side) {
@@ -143,6 +142,13 @@ const sidePoint = (n: Note, side: ConnectionSide): Point => {
   }
 };
 
+const CONNECTION_ENDPOINT_GAP = 12;
+
+const outsetPoint = (point: Point, side: ConnectionSide, gap = CONNECTION_ENDPOINT_GAP): Point => {
+  const v = sideVector(side);
+  return { x: point.x + v.x * gap, y: point.y + v.y * gap };
+};
+
 const connectionPath = (from: Point, fromSide: ConnectionSide, to: Point, toSide: ConnectionSide) => {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -179,6 +185,7 @@ export default function App() {
   const [connectionPrompt, setConnectionPrompt] = useState<ConnectionPrompt | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedConnections, setSelectedConnections] = useState<Set<string>>(new Set());
+  const [selectedConnectionLabelId, setSelectedConnectionLabelId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark"); // dark by default
@@ -205,6 +212,7 @@ export default function App() {
   const saveTimer = useRef<number | undefined>(undefined);
   const undoStack = useRef<{ notes: Note[]; connections: NoteConnection[] }[]>([]);
   const redoStack = useRef<{ notes: Note[]; connections: NoteConnection[] }[]>([]);
+  const connectionFocusToggle = useRef<Record<string, number>>({});
 
   notesRef.current = notes;
   connectionsRef.current = connections;
@@ -409,6 +417,7 @@ export default function App() {
       return s;
     });
     setEditingConnectionId((id) => (id && relatedIds.has(id) ? null : id));
+    setSelectedConnectionLabelId((id) => (id && relatedIds.has(id) ? null : id));
     setEditingId((id) => (id && idSet.has(id) ? null : id));
     setSelected((prev) => {
       const s = new Set(prev);
@@ -502,6 +511,28 @@ export default function App() {
     setConnections((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   }, []);
 
+  const finishConnectionLabelEdit = useCallback(
+    (id: string) => {
+      const value = connectionsRef.current.find((c) => c.id === id)?.label ?? "";
+      if (!value.trim()) {
+        updateConnection(id, { label: undefined });
+        setSelectedConnectionLabelId((current) => (current === id ? null : current));
+      }
+      setEditingConnectionId((current) => (current === id ? null : current));
+    },
+    [updateConnection]
+  );
+
+  const clearConnectionLabel = useCallback(
+    (id: string) => {
+      updateConnection(id, { label: undefined });
+      setEditingConnectionId((current) => (current === id ? null : current));
+      setSelectedConnectionLabelId((current) => (current === id ? null : current));
+      push("info", "نوشته‌ی اتصال پاک شد");
+    },
+    [push, updateConnection]
+  );
+
   const deleteConnectionIds = useCallback(
     (ids: string[]) => {
       const idSet = new Set(ids);
@@ -513,19 +544,25 @@ export default function App() {
         return s;
       });
       setEditingConnectionId((id) => (id && idSet.has(id) ? null : id));
+      setSelectedConnectionLabelId((id) => (id && idSet.has(id) ? null : id));
       push("info", ids.length > 1 ? `${faNum(ids.length)} اتصال حذف شد` : "اتصال حذف شد");
     },
     [push]
   );
 
-  const connectionPoints = useCallback((connection: NoteConnection): { from: Point; to: Point; mid: Point } | null => {
-    const fromNote = notesRef.current.find((n) => n.id === connection.from.noteId);
-    const toNote = notesRef.current.find((n) => n.id === connection.to.noteId);
-    if (!fromNote || !toNote) return null;
-    const from = sidePoint(fromNote, connection.from.side);
-    const to = sidePoint(toNote, connection.to.side);
-    return { from, to, mid: midpoint(from, to) };
-  }, []);
+  const connectionPoints = useCallback(
+    (connection: NoteConnection): { from: Point; to: Point; drawFrom: Point; drawTo: Point; mid: Point } | null => {
+      const fromNote = notesRef.current.find((n) => n.id === connection.from.noteId);
+      const toNote = notesRef.current.find((n) => n.id === connection.to.noteId);
+      if (!fromNote || !toNote) return null;
+      const from = sidePoint(fromNote, connection.from.side);
+      const to = sidePoint(toNote, connection.to.side);
+      const drawFrom = outsetPoint(from, connection.from.side);
+      const drawTo = outsetPoint(to, connection.to.side);
+      return { from, to, drawFrom, drawTo, mid: midpoint(drawFrom, drawTo) };
+    },
+    []
+  );
 
   const selectedNotes = useCallback(
     () => notesRef.current.filter((n) => selected.has(n.id)),
@@ -653,17 +690,6 @@ export default function App() {
       e.stopPropagation();
       setMenu(null);
       setConnectionPrompt(null);
-      const reroute = draftConnection?.rerouteId ? draftConnection : null;
-      if (reroute) {
-        const target = { noteId: id, side };
-        if (target.noteId !== reroute.from.noteId) {
-          updateConnection(reroute.rerouteId!, { from: reroute.from, to: target });
-          setSelectedConnections(new Set([reroute.rerouteId!]));
-          push("success", "مسیر اتصال به نقطه‌ی جدید وصل شد");
-        }
-        setDraftConnection(null);
-        return;
-      }
       const from = { noteId: id, side };
       const start = sidePoint(notesRef.current.find((n) => n.id === id)!, side);
       const move = (ev: PointerEvent) => {
@@ -694,7 +720,7 @@ export default function App() {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     },
-    [addConnection, draftConnection, endpointPoint, nearestConnector, push, updateConnection, worldPointFromScreen]
+    [addConnection, endpointPoint, nearestConnector, push, worldPointFromScreen]
   );
 
   const addConnectedNoteFromPrompt = useCallback(() => {
@@ -721,20 +747,14 @@ export default function App() {
     }
     const note = createNote({ id, x: Math.round(x), y: Math.round(y), color: "violet" });
     setNotes((prev) => [...prev, note]);
-    const newEndpoint = { noteId: id, side: newSide };
-    if (prompt.rerouteId) {
-      updateConnection(prompt.rerouteId, { from: prompt.from, to: newEndpoint });
-      setSelectedConnections(new Set([prompt.rerouteId]));
-    } else {
-      addConnection(prompt.from, newEndpoint);
-    }
+    addConnection(prompt.from, { noteId: id, side: newSide });
     setSelected(new Set([id]));
     setAutoFocusId(id);
     setRecentId(id);
     setConnectionPrompt(null);
     window.setTimeout(() => setAutoFocusId(null), 1600);
     window.setTimeout(() => setRecentId(null), 2600);
-  }, [addConnection, connectionPrompt, updateConnection]);
+  }, [addConnection, connectionPrompt]);
 
   const onNoteDragStart = useCallback(
     (e: React.PointerEvent, id: string) => {
@@ -742,6 +762,7 @@ export default function App() {
       e.stopPropagation();
       setMenu(null);
       setEditingConnectionId(null);
+      setSelectedConnectionLabelId(null);
       if (e.ctrlKey || e.metaKey) {
         setSelected((prev) => {
           const s = new Set(prev);
@@ -774,31 +795,11 @@ export default function App() {
       if ((e.target as HTMLElement).closest("[data-note]")) return;
       if ((e.target as HTMLElement).closest("input, textarea, a, button")) return;
       if ((e.target as HTMLElement).closest("[data-ui]")) return;
-      if (draftConnection?.rerouteId && e.button === 0) {
-        const target = nearestConnector(e.clientX, e.clientY, draftConnection.from.noteId);
-        if (target) {
-          updateConnection(draftConnection.rerouteId, { from: draftConnection.from, to: target });
-          setSelectedConnections(new Set([draftConnection.rerouteId]));
-          push("success", "مسیر اتصال تغییر کرد");
-          setDraftConnection(null);
-        } else {
-          const to = worldPointFromScreen(e.clientX, e.clientY);
-          setConnectionPrompt({
-            x: clamp(e.clientX, 12, window.innerWidth - 190),
-            y: clamp(e.clientY, 12, window.innerHeight - 64),
-            from: draftConnection.from,
-            to,
-            rerouteId: draftConnection.rerouteId,
-          });
-          setDraftConnection(null);
-        }
-        e.preventDefault();
-        return;
-      }
       setMenu(null);
       setConnectionPrompt(null);
       setEditingId(null);
       setEditingConnectionId(null);
+      setSelectedConnectionLabelId(null);
       const v = viewRef.current;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (e.button === 2 || e.pointerType === "touch") {
@@ -818,23 +819,12 @@ export default function App() {
         document.body.classList.add("selecting");
       }
     },
-    [draftConnection, nearestConnector, push, selected, updateConnection, worldPointFromScreen]
+    [selected]
   );
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const g = gesture.current;
-    if (!g) {
-      if (draftConnection?.rerouteId) {
-        const target = nearestConnector(e.clientX, e.clientY, draftConnection.from.noteId);
-        const targetPoint = target ? endpointPoint(target) : null;
-        setDraftConnection({
-          ...draftConnection,
-          target,
-          to: targetPoint ?? worldPointFromScreen(e.clientX, e.clientY),
-        });
-      }
-      return;
-    }
+    if (!g) return;
     const v = viewRef.current;
     if (g.type === "pan") {
       const dx = e.clientX - g.sx;
@@ -890,6 +880,7 @@ export default function App() {
       }
       setSelected(new Set([...g.base, ...hits]));
       setSelectedConnections(new Set(connectionHits));
+      setSelectedConnectionLabelId(null);
     } else if (g.type === "note") {
       const dx = (e.clientX - g.sx) / v.zoom;
       const dy = (e.clientY - g.sy) / v.zoom;
@@ -906,7 +897,7 @@ export default function App() {
         )
       );
     }
-  }, [applyView, connectionPoints, draftConnection, endpointPoint, nearestConnector, worldPointFromScreen]);
+  }, [applyView, connectionPoints]);
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
@@ -924,6 +915,7 @@ export default function App() {
         if (!g.moved && !g.additive) {
           setSelected(new Set());
           setSelectedConnections(new Set());
+          setSelectedConnectionLabelId(null);
         }
       } else if (g.type === "note") {
         if (g.moved) {
@@ -962,7 +954,10 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, [contenteditable]")) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && (selected.size || selectedConnections.size)) {
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedConnectionLabelId) {
+        e.preventDefault();
+        clearConnectionLabel(selectedConnectionLabelId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && (selected.size || selectedConnections.size)) {
         e.preventDefault();
         if (selected.size) deleteIds([...selected]);
         else deleteConnectionIds([...selectedConnections]);
@@ -978,17 +973,20 @@ export default function App() {
         setDeletePrompt(null);
         setEditingId(null);
         setEditingConnectionId(null);
+        setSelectedConnectionLabelId(null);
         setDraftConnection(null);
         setSelected(new Set());
         setSelectedConnections(new Set());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         setSelected(new Set(notesRef.current.map((n) => n.id)));
+        setSelectedConnections(new Set());
+        setSelectedConnectionLabelId(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, selectedConnections, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
+  }, [selected, selectedConnections, selectedConnectionLabelId, clearConnectionLabel, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
 
   /* -------------------------- context menus ------------------------- */
   const clampMenu = (x: number, y: number, estH: number) => ({
@@ -1177,18 +1175,28 @@ export default function App() {
     [addNoteAt, arrangeGrid, fitView, applyView, persistSoon]
   );
 
-  const beginRerouteConnection = useCallback(
+  const focusConnectedNote = useCallback(
     (id: string) => {
       const c = connectionsRef.current.find((x) => x.id === id);
       if (!c) return;
-      const pts = connectionPoints(c);
-      if (!pts) return;
-      setSelected(new Set());
+      const nextIndex = connectionFocusToggle.current[id] === 1 ? 0 : 1;
+      connectionFocusToggle.current[id] = nextIndex;
+      const endpoint = nextIndex === 1 ? c.to : c.from;
+      const note = notesRef.current.find((n) => n.id === endpoint.noteId);
+      if (!note) return;
+      const { width, height } = noteSize(note);
+      const zoom = clamp(Math.max(viewRef.current.zoom, 1.25), MIN_ZOOM, 1.65);
+      viewRef.current.zoom = zoom;
+      viewRef.current.x = window.innerWidth / 2 - (note.x + width / 2) * zoom;
+      viewRef.current.y = window.innerHeight / 2 - (note.y + height / 2) * zoom;
+      applyView();
+      persistSoon();
+      setSelected(new Set([note.id]));
       setSelectedConnections(new Set([id]));
-      setDraftConnection({ from: c.from, to: pts.to, target: c.to, rerouteId: id });
-      push("info", "برای تغییر مسیر اتصال، روی نقطه‌ی اتصال مقصد کلیک کنید یا روی بوم کلیک کنید تا یادداشت جدید بسازید");
+      setSelectedConnectionLabelId(null);
+      push("info", "یادداشت متصل نمایش داده شد");
     },
-    [connectionPoints, push]
+    [applyView, persistSoon, push]
   );
 
   const onNoteContextMenu = useCallback(
@@ -1237,24 +1245,32 @@ export default function App() {
       if (!connection) return;
       setSelected(new Set());
       setSelectedConnections(new Set([id]));
-      const colorRows: MenuRow[] = CONNECTION_COLORS.map((color) => ({
-        icon: Palette,
-        label: color.name,
-        onClick: () => updateConnection(id, { color: color.hex }),
-      }));
+      setSelectedConnectionLabelId(null);
+      const pts = connectionPoints(connection);
+      if (pts) {
+        const clickPoint = worldPointFromScreen(e.clientX, e.clientY);
+        const fromDistance = Math.hypot(clickPoint.x - pts.from.x, clickPoint.y - pts.from.y);
+        const toDistance = Math.hypot(clickPoint.x - pts.to.x, clickPoint.y - pts.to.y);
+        connectionFocusToggle.current[id] = fromDistance <= toDistance ? 0 : 1;
+      }
       const rows: MenuRow[] = [
+        {
+          type: "swatches",
+          current: connectionColor(connection),
+          colors: CONNECTION_COLORS.map((color) => ({ id: color.hex, name: color.name, hex: color.hex })),
+          onPick: (color) => updateConnection(id, { color }),
+        },
         { type: "label", text: "اتصال" },
         { icon: Ban, label: "فلش بدون جهت", onClick: () => updateConnection(id, { direction: "none" }) },
         { icon: ArrowRight, label: "فلش تک‌جهته", onClick: () => updateConnection(id, { direction: "forward" }) },
         { icon: ArrowLeftRight, label: "فلش دوجهته", onClick: () => updateConnection(id, { direction: "both" }) },
-        { type: "submenu", icon: Palette, label: "تغییر رنگ", rows: colorRows },
         { type: "sep" },
-        { icon: MousePointer2, label: "پی گرفتن اتصال", onClick: () => beginRerouteConnection(id) },
+        { icon: MousePointer2, label: "رفتن به اتصال", onClick: () => focusConnectedNote(id) },
         { icon: Trash2, label: "حذف اتصال", danger: true, onClick: () => deleteConnectionIds([id]) },
       ];
-      setMenu({ ...clampMenu(e.clientX, e.clientY, 360), rows });
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 340), rows });
     },
-    [beginRerouteConnection, clampMenu, deleteConnectionIds, updateConnection]
+    [clampMenu, connectionPoints, deleteConnectionIds, focusConnectedNote, updateConnection, worldPointFromScreen]
   );
 
   const onRootContextMenu = useCallback(
@@ -1267,7 +1283,7 @@ export default function App() {
         suppressCtx.current = false;
         return;
       }
-      if (t.closest("[data-note]")) return; // handled by NoteCard
+      if (t.closest("[data-note], [data-connection-label]")) return; // handled by NoteCard/connection label
       openCanvasMenu(e.clientX, e.clientY);
     },
     [openCanvasMenu]
@@ -1276,7 +1292,7 @@ export default function App() {
   const onDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest("[data-note]") || t.closest("input, textarea, button, a") || t.closest("[data-ui]"))
+      if (t.closest("[data-note], [data-connection-label]") || t.closest("input, textarea, button, a") || t.closest("[data-ui]"))
         return;
       const v = viewRef.current;
       addNoteAt((e.clientX - v.x) / v.zoom, (e.clientY - v.y) / v.zoom);
@@ -1303,18 +1319,24 @@ export default function App() {
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
         <svg className="absolute left-0 top-0 overflow-visible z-0" width="1" height="1">
           <defs>
-            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
-              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
-            </marker>
-            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="0.9" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+            <marker
+              id="note-arrow"
+              markerWidth="6"
+              markerHeight="6"
+              refX="5.4"
+              refY="3"
+              orient="auto"
+              markerUnits="userSpaceOnUse"
+              viewBox="0 0 6 6"
+            >
               <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
             </marker>
           </defs>
           {connections.map((c) => {
-            const from = endpointPoint(c.from);
-            const to = endpointPoint(c.to);
-            if (!from || !to) return null;
-            const d = connectionPath(from, c.from.side, to, c.to.side);
+            const pts = connectionPoints(c);
+            if (!pts) return null;
+            const d = connectionPath(pts.drawFrom, c.from.side, pts.drawTo, c.to.side);
+            const reverseD = connectionPath(pts.drawTo, c.to.side, pts.drawFrom, c.from.side);
             const isSelected = selectedConnections.has(c.id);
             const direction = connectionDirection(c);
             const color = connectionColor(c);
@@ -1323,6 +1345,8 @@ export default function App() {
               event.stopPropagation();
               setSelected(new Set());
               setEditingId(null);
+              setSelectedConnectionLabelId(null);
+              setEditingConnectionId(null);
               setSelectedConnections((prev) => {
                 if (event.ctrlKey || event.metaKey) {
                   const next = new Set(prev);
@@ -1347,20 +1371,43 @@ export default function App() {
                   onDoubleClick={(event) => {
                     selectConnection(event);
                     setEditingConnectionId(c.id);
+                    setSelectedConnectionLabelId(c.id);
                   }}
                   onContextMenu={(event) => onConnectionContextMenu(event, c.id)}
                 />
+                {isSelected && (
+                  <path
+                    d={d}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={8}
+                    strokeLinecap="round"
+                    opacity={0.25}
+                    style={{ pointerEvents: "none" }}
+                  />
+                )}
                 <path
                   d={d}
                   fill="none"
                   stroke={color}
-                  strokeWidth={isSelected ? 4 : 2.5}
+                  strokeWidth={2.5}
                   strokeLinecap="round"
-                  markerStart={direction === "both" ? "url(#note-arrow-start)" : undefined}
                   markerEnd={direction === "forward" || direction === "both" ? "url(#note-arrow)" : undefined}
                   opacity={isSelected ? 1 : 0.9}
-                  style={{ pointerEvents: "none", filter: isSelected ? "drop-shadow(0 0 5px rgba(139,149,167,.55))" : undefined }}
+                  style={{ pointerEvents: "none", filter: isSelected ? "drop-shadow(0 0 5px rgba(139,149,167,.5))" : undefined }}
                 />
+                {direction === "both" && (
+                  <path
+                    d={reverseD}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={0.01}
+                    strokeLinecap="round"
+                    markerEnd="url(#note-arrow)"
+                    opacity={isSelected ? 1 : 0.9}
+                    style={{ pointerEvents: "none" }}
+                  />
+                )}
               </g>
             );
           })}
@@ -1402,48 +1449,82 @@ export default function App() {
         {connections.map((c) => {
           const pts = connectionPoints(c);
           if (!pts) return null;
-          const show = c.label || selectedConnections.has(c.id) || editingConnectionId === c.id;
-          if (!show) return null;
+          const isEditingLabel = editingConnectionId === c.id;
+          const hasLabel = Boolean(c.label);
+          if (!hasLabel && !isEditingLabel) return null;
           const color = connectionColor(c);
+          const isLabelSelected = selectedConnectionLabelId === c.id;
+          const labelValue = c.label ?? "";
+          const labelDir = labelValue.trim() ? "auto" : "rtl";
+          const labelRows = Math.min(6, Math.max(1, labelValue.split("\n").length));
           return (
             <div
               key={`label-${c.id}`}
               data-connection-label
-              className="absolute z-30 -translate-x-1/2 -translate-y-1/2 pointer-events-auto"
+              className={`connection-label-shell absolute z-30 -translate-x-1/2 -translate-y-1/2 pointer-events-auto ${
+                isLabelSelected ? "connection-label-shell-selected" : ""
+              }`}
               style={{ left: pts.mid.x, top: pts.mid.y }}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelected(new Set());
-                setSelectedConnections(new Set([c.id]));
+                if (!selectedConnections.has(c.id)) {
+                  setSelectedConnections(new Set([c.id]));
+                  setSelectedConnectionLabelId(null);
+                } else {
+                  setSelectedConnectionLabelId(c.id);
+                }
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                setEditingConnectionId(c.id);
+                setSelected(new Set());
                 setSelectedConnections(new Set([c.id]));
+                setSelectedConnectionLabelId(c.id);
+                setEditingConnectionId(c.id);
               }}
               onContextMenu={(e) => onConnectionContextMenu(e, c.id)}
             >
-              {editingConnectionId === c.id ? (
-                <input
+              {isEditingLabel ? (
+                <textarea
                   autoFocus
-                  dir="auto"
-                  value={c.label ?? ""}
-                  placeholder="متن اتصال…"
+                  dir={labelDir}
+                  value={labelValue}
+                  rows={labelRows}
                   className="connection-label-input"
-                  style={{ borderColor: color }}
+                  style={{ borderColor: color, color }}
                   onChange={(e) => updateConnection(c.id, { label: e.target.value })}
-                  onBlur={() => setEditingConnectionId(null)}
+                  onBlur={() => finishConnectionLabelEdit(c.id)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === "Escape") setEditingConnectionId(null);
+                    e.stopPropagation();
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      finishConnectionLabelEdit(c.id);
+                    }
                   }}
                 />
               ) : (
                 <button
-                  className={`connection-label ${selectedConnections.has(c.id) ? "connection-label-selected" : ""}`}
+                  type="button"
+                  className="connection-label"
+                  dir={labelDir}
                   style={{ borderColor: color, color }}
                 >
-                  {c.label || "افزودن نوشته"}
+                  {labelValue}
+                </button>
+              )}
+              {isLabelSelected && !isEditingLabel && (
+                <button
+                  type="button"
+                  className="connection-label-delete"
+                  title="پاک کردن نوشته اتصال"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    clearConnectionLabel(c.id);
+                  }}
+                >
+                  <Trash2 size={11} />
                 </button>
               )}
             </div>
