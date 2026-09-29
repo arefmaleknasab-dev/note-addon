@@ -32,6 +32,10 @@ export interface NoteGroup {
   title: string;
   noteIds: string[];
   color: string; // palette id
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   createdAt: number;
 }
 

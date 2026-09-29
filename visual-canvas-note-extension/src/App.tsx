@@ -103,10 +103,12 @@ type Gesture =
       groupId: string;
       ids: string[];
       origins: Record<string, { x: number; y: number }>;
+      groupOrigin: { x: number; y: number };
     }
   | null;
 
 type Point = { x: number; y: number };
+type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 type Endpoint = { noteId: string; side: ConnectionSide };
 type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null };
 type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point };
@@ -217,21 +219,93 @@ const connectionLabelBoxSize = (value: string) => {
 const rectsIntersect = (a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) =>
   a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
 
-const groupBounds = (group: NoteGroup, notes: Note[]) => {
-  const members = notes.filter((n) => group.noteIds.includes(n.id));
+const GROUP_PAD = 28;
+const GROUP_TITLE_SPACE = 22;
+const MIN_GROUP_W = 260;
+const MIN_GROUP_H = 170;
+const MAX_GROUP_W = 5200;
+const MAX_GROUP_H = 4200;
+
+const groupResizeHandles: { id: ResizeHandle; className: string; cursor: string }[] = [
+  { id: "n", className: "top-0 left-6 right-6 h-3 -translate-y-1/2", cursor: "ns-resize" },
+  { id: "s", className: "bottom-0 left-6 right-6 h-3 translate-y-1/2", cursor: "ns-resize" },
+  { id: "e", className: "right-0 top-6 bottom-6 w-3 translate-x-1/2", cursor: "ew-resize" },
+  { id: "w", className: "left-0 top-6 bottom-6 w-3 -translate-x-1/2", cursor: "ew-resize" },
+  { id: "ne", className: "right-0 top-0 w-7 h-7 translate-x-1/2 -translate-y-1/2", cursor: "nesw-resize" },
+  { id: "nw", className: "left-0 top-0 w-7 h-7 -translate-x-1/2 -translate-y-1/2", cursor: "nwse-resize" },
+  { id: "se", className: "right-0 bottom-0 w-7 h-7 translate-x-1/2 translate-y-1/2", cursor: "nwse-resize" },
+  { id: "sw", className: "left-0 bottom-0 w-7 h-7 -translate-x-1/2 translate-y-1/2", cursor: "nesw-resize" },
+];
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const noteCenter = (note: Note): Point => {
+  const { width, height } = noteSize(note);
+  return { x: note.x + width / 2, y: note.y + height / 2 };
+};
+
+const pointInsideGroup = (point: Point, group: NoteGroup) =>
+  point.x >= group.x && point.x <= group.x + group.width && point.y >= group.y && point.y <= group.y + group.height;
+
+const groupBoxForNotes = (ids: string[], notes: Note[]) => {
+  const idSet = new Set(ids);
+  const members = notes.filter((n) => idSet.has(n.id));
   if (!members.length) return null;
-  const pad = 28;
   const minX = Math.min(...members.map((n) => n.x));
   const minY = Math.min(...members.map((n) => n.y));
   const maxX = Math.max(...members.map((n) => n.x + noteSize(n).width));
   const maxY = Math.max(...members.map((n) => n.y + noteSize(n).height));
+  const width = clamp(maxX - minX + GROUP_PAD * 2, MIN_GROUP_W, MAX_GROUP_W);
+  const height = clamp(maxY - minY + GROUP_PAD * 2 + GROUP_TITLE_SPACE, MIN_GROUP_H, MAX_GROUP_H);
   return {
-    x: minX - pad,
-    y: minY - pad - 22,
-    width: maxX - minX + pad * 2,
-    height: maxY - minY + pad * 2 + 22,
+    x: Math.round(minX - GROUP_PAD),
+    y: Math.round(minY - GROUP_PAD - GROUP_TITLE_SPACE),
+    width: Math.round(width),
+    height: Math.round(height),
   };
 };
+
+const normalizeGroup = (group: Partial<NoteGroup>, notes: Note[]): NoteGroup | null => {
+  const noteIds = Array.isArray(group.noteIds) ? group.noteIds.filter((id): id is string => typeof id === "string") : [];
+  const fallback = groupBoxForNotes(noteIds, notes) ?? { x: 0, y: 0, width: MIN_GROUP_W, height: MIN_GROUP_H };
+  return {
+    id: typeof group.id === "string" && group.id ? group.id : uid(),
+    title: typeof group.title === "string" && group.title.trim() ? group.title : "گروه",
+    noteIds,
+    color: typeof group.color === "string" && group.color ? group.color : "slate",
+    x: Math.round(isFiniteNumber(group.x) ? group.x : fallback.x),
+    y: Math.round(isFiniteNumber(group.y) ? group.y : fallback.y),
+    width: Math.round(clamp(isFiniteNumber(group.width) ? group.width : fallback.width, MIN_GROUP_W, MAX_GROUP_W)),
+    height: Math.round(clamp(isFiniteNumber(group.height) ? group.height : fallback.height, MIN_GROUP_H, MAX_GROUP_H)),
+    createdAt: isFiniteNumber(group.createdAt) ? group.createdAt : Date.now(),
+  };
+};
+
+const syncGroupMembership = (groups: NoteGroup[], notes: Note[]) => {
+  if (!groups.length) return groups;
+  const nextIds = new Map<string, string[]>();
+  groups.forEach((group) => nextIds.set(group.id, []));
+  for (const note of notes) {
+    const center = noteCenter(note);
+    for (let i = groups.length - 1; i >= 0; i -= 1) {
+      if (pointInsideGroup(center, groups[i])) {
+        nextIds.get(groups[i].id)?.push(note.id);
+        break;
+      }
+    }
+  }
+  let changed = false;
+  const next = groups.map((group) => {
+    const ids = nextIds.get(group.id) ?? [];
+    const same = ids.length === group.noteIds.length && ids.every((id, i) => id === group.noteIds[i]);
+    if (same) return group;
+    changed = true;
+    return { ...group, noteIds: ids };
+  });
+  return changed ? next : groups;
+};
+
+const groupBounds = (group: NoteGroup) => ({ x: group.x, y: group.y, width: group.width, height: group.height });
 
 const EXPORT_FORMAT = "persian-notes-canvas";
 const EXPORT_VERSION = 1;
@@ -261,6 +335,7 @@ export default function App() {
   const [selectedConnectionLabelId, setSelectedConnectionLabelId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark"); // dark by default
   const [loaded, setLoaded] = useState(false);
@@ -401,7 +476,11 @@ export default function App() {
           cursorX += size.width + 64;
           return note;
         });
-        setNotes((prev) => [...prev, ...fresh]);
+        setNotes((prev) => {
+          const next = [...prev, ...fresh];
+          setGroups((groups) => syncGroupMembership(groups, next));
+          return next;
+        });
         setRecentId(fresh[0].id);
         window.setTimeout(() => setRecentId(null), 2600);
         if (!initial)
@@ -419,9 +498,10 @@ export default function App() {
       const s = await loadState().catch(() => undefined);
       if (!alive) return;
       if (s?.notes) {
-        setNotes(s.notes.map((n) => ({ ...n, width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H })));
+        const savedNotes = s.notes.map((n) => ({ ...n, width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H }));
+        setNotes(savedNotes);
         setConnections(s.connections ?? []);
-        setGroups(s.groups ?? []);
+        setGroups((s.groups ?? []).map((g) => normalizeGroup(g, savedNotes)).filter((g): g is NoteGroup => Boolean(g)));
         setTheme(s.theme ?? "dark");
         if (s.view) viewRef.current = s.view;
       } else if (!(await getSeedFlag())) {
@@ -451,7 +531,12 @@ export default function App() {
 
   /* --------------------------- note actions ------------------------- */
   const updateNote = useCallback((id: string, patch: Partial<Note>) => {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+    const geometryChanged = ["x", "y", "width", "height"].some((key) => key in patch);
+    setNotes((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, ...patch } : n));
+      if (geometryChanged) setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
   }, []);
 
   const addNoteAt = useCallback((wx?: number, wy?: number) => {
@@ -461,7 +546,11 @@ export default function App() {
       x: (wx ?? c.x - DEFAULT_NOTE_W / 2) + j(),
       y: (wy ?? c.y - 100) + j(),
     });
-    setNotes((prev) => [...prev, n]);
+    setNotes((prev) => {
+      const next = [...prev, n];
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
     setAutoFocusId(n.id);
     window.setTimeout(() => setAutoFocusId(null), 1600);
   }, []);
@@ -489,7 +578,11 @@ export default function App() {
         cursorX += size.width + 64;
         return note;
       });
-      setNotes((prev) => [...prev, ...fresh]);
+      setNotes((prev) => {
+        const next = [...prev, ...fresh];
+        setGroups((groups) => syncGroupMembership(groups, next));
+        return next;
+      });
       setSelected(new Set(fresh.map((n) => n.id)));
       setSelectedGroupId(null);
       setRecentId(fresh[0].id);
@@ -533,9 +626,11 @@ export default function App() {
         exportedAt: new Date().toISOString(),
         notes: outNotes,
         connections: connectionsRef.current.filter((c) => outIds.has(c.from.noteId) && outIds.has(c.to.noteId)),
-        groups: groupsRef.current
-          .map((g) => ({ ...g, noteIds: g.noteIds.filter((id) => outIds.has(id)) }))
-          .filter((g) => g.noteIds.length > 0),
+        groups: idSet
+          ? groupsRef.current
+              .map((g) => ({ ...g, noteIds: g.noteIds.filter((id) => outIds.has(id)) }))
+              .filter((g) => g.noteIds.length > 0)
+          : groupsRef.current,
         view: idSet ? undefined : viewRef.current,
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
@@ -590,19 +685,24 @@ export default function App() {
         })
         .filter((c): c is NoteConnection => Boolean(c));
       const freshGroups = (data.groups ?? [])
-        .map((g) => ({
-          ...g,
-          id: uid(),
-          noteIds: g.noteIds.map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)),
-          title: g.title || "گروه",
-          color: g.color || "slate",
-          createdAt: g.createdAt || Date.now(),
-        }))
-        .filter((g) => g.noteIds.length > 0);
+        .map((g) =>
+          normalizeGroup(
+            {
+              ...g,
+              id: uid(),
+              noteIds: (g.noteIds ?? []).map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)),
+              title: g.title || "گروه",
+              color: g.color || "slate",
+              createdAt: g.createdAt || Date.now(),
+            },
+            freshNotes
+          )
+        )
+        .filter((g): g is NoteGroup => Boolean(g));
       setNotes((prev) => [...prev, ...freshNotes]);
       setConnections((prev) => [...prev, ...freshConnections]);
-      setGroups((prev) => [...prev, ...freshGroups]);
-      setSelected(freshIds);
+      setGroups((prev) => syncGroupMembership([...prev, ...freshGroups], [...notesRef.current, ...freshNotes]));
+      setSelected(freshGroups.length ? new Set() : freshIds);
       setSelectedGroupId(freshGroups[0]?.id ?? null);
       push("success", `${faNum(freshNotes.length)} یادداشت از فایل بارگذاری شد`);
     },
@@ -673,11 +773,7 @@ export default function App() {
     redoStack.current = [];
     setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
     setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
-    setGroups((prev) =>
-      prev
-        .map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !idSet.has(nid)) }))
-        .filter((g) => g.noteIds.length > 0)
-    );
+    setGroups((prev) => prev.map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !idSet.has(nid)) })));
     setSelectedGroupId((gid) => {
       const g = groupsRef.current.find((group) => group.id === gid);
       return g && g.noteIds.some((nid) => idSet.has(nid)) ? null : gid;
@@ -734,11 +830,7 @@ export default function App() {
     const ids = new Set(snap.notes.map((n) => n.id));
     setNotes((prev) => prev.filter((n) => !ids.has(n.id)));
     setConnections((prev) => prev.filter((c) => !ids.has(c.from.noteId) && !ids.has(c.to.noteId)));
-    setGroups((prev) =>
-      prev
-        .map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !ids.has(nid)) }))
-        .filter((g) => g.noteIds.length > 0)
-    );
+    setGroups((prev) => prev.map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !ids.has(nid)) })));
     setSelectedGroupId(null);
     setSelected((prev) => {
       const s = new Set(prev);
@@ -750,18 +842,22 @@ export default function App() {
 
   const duplicateIds = useCallback(
     (ids: string[]) => {
-      setNotes((prev) => [
-        ...prev,
-        ...prev
-          .filter((n) => ids.includes(n.id))
-          .map((n) => ({
-            ...n,
-            id: uid(),
-            x: n.x + 30,
-            y: n.y + 30,
-            createdAt: Date.now(),
-          })),
-      ]);
+      setNotes((prev) => {
+        const next = [
+          ...prev,
+          ...prev
+            .filter((n) => ids.includes(n.id))
+            .map((n) => ({
+              ...n,
+              id: uid(),
+              x: n.x + 30,
+              y: n.y + 30,
+              createdAt: Date.now(),
+            })),
+        ];
+        setGroups((groups) => syncGroupMembership(groups, next));
+        return next;
+      });
       push("success", ids.length > 1 ? "یادداشت‌ها تکثیر شدند" : "یادداشت تکثیر شد");
     },
     [push]
@@ -769,8 +865,8 @@ export default function App() {
 
   const resizeNoteIds = useCallback((ids: string[], mode: "small" | "medium" | "large" | "auto") => {
     const unique = new Set(ids);
-    setNotes((prev) =>
-      prev.map((n) => {
+    setNotes((prev) => {
+      const next = prev.map((n) => {
         if (!unique.has(n.id)) return n;
         if (mode === "auto") return { ...n, ...estimateNoteSize(`${n.title}\n${n.text}`.trim()) };
         const presets = {
@@ -779,8 +875,10 @@ export default function App() {
           large: { width: 720, height: 520 },
         } as const;
         return { ...n, ...presets[mode] };
-      })
-    );
+      });
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
   }, []);
 
   const copyNoteById = useCallback(
@@ -922,7 +1020,11 @@ export default function App() {
     items.forEach((n, i) =>
       pos.set(n.id, { x: x0 + (i % cols) * cellW, y: y0 + Math.floor(i / cols) * cellH })
     );
-    setNotes((prev) => prev.map((n) => (pos.has(n.id) ? { ...n, ...pos.get(n.id)! } : n)));
+    setNotes((prev) => {
+      const next = prev.map((n) => (pos.has(n.id) ? { ...n, ...pos.get(n.id)! } : n));
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
     push("success", "یادداشت‌ها به‌صورت شبکه‌ای مرتب شد");
   }, [selected, push]);
 
@@ -933,15 +1035,18 @@ export default function App() {
         push("error", "برای ساخت گروه حداقل دو یادداشت انتخاب کنید");
         return;
       }
+      const box = groupBoxForNotes(unique, notesRef.current);
+      if (!box) return;
       const group: NoteGroup = {
         id: uid(),
         title: "گروه",
         noteIds: unique,
         color: "slate",
+        ...box,
         createdAt: Date.now(),
       };
-      setGroups((prev) => [...prev, group]);
-      setSelected(new Set(unique));
+      setGroups((prev) => syncGroupMembership([...prev, group], notesRef.current));
+      setSelected(new Set());
       setSelectedGroupId(group.id);
       push("success", "گروه ساخته شد");
     },
@@ -956,6 +1061,7 @@ export default function App() {
     (id: string) => {
       setGroups((prev) => prev.filter((g) => g.id !== id));
       setSelectedGroupId((current) => (current === id ? null : current));
+      setEditingGroupId((current) => (current === id ? null : current));
       push("info", "گروه حذف شد؛ یادداشت‌ها باقی ماندند");
     },
     [push]
@@ -975,6 +1081,19 @@ export default function App() {
   const endpointPoint = useCallback((endpoint: Endpoint): Point | null => {
     const note = notesRef.current.find((n) => n.id === endpoint.noteId);
     return note ? sidePoint(note, endpoint.side) : null;
+  }, []);
+
+  const beginPan = useCallback((e: React.PointerEvent) => {
+    setMenu(null);
+    setConnectionPrompt(null);
+    setEditingId(null);
+    setEditingGroupId(null);
+    setEditingConnectionId(null);
+    setSelectedConnectionLabelId(null);
+    const v = viewRef.current;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    gesture.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: v.x, oy: v.y, moved: false };
+    document.body.classList.add("grabbing");
   }, []);
 
   const nearestConnector = useCallback(
@@ -1098,12 +1217,22 @@ export default function App() {
 
   const onNoteDragStart = useCallback(
     (e: React.PointerEvent, id: string) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        beginPan(e);
+        return;
+      }
       if (e.button !== 0) return;
       e.stopPropagation();
       setMenu(null);
+      setEditingId((current) => (current === id ? current : null));
+      setEditingGroupId(null);
       setEditingConnectionId(null);
       setSelectedConnectionLabelId(null);
       if (e.ctrlKey || e.metaKey) {
+        setSelectedGroupId(null);
+        setSelectedConnections(new Set());
         setSelected((prev) => {
           const s = new Set(prev);
           if (s.has(id)) s.delete(id);
@@ -1112,44 +1241,36 @@ export default function App() {
         });
         return;
       }
-      let ids: string[];
+      const ids = [id];
       setSelectedConnections(new Set());
       setSelectedGroupId(null);
-      if (selected.has(id)) ids = [...selected];
-      else {
-        ids = [id];
-        setSelected(new Set([id]));
-      }
+      if (!selected.has(id) || selected.size !== 1) setSelected(new Set([id]));
       const origins: Record<string, { x: number; y: number }> = {};
-      for (const nid of ids) {
-        const n = notesRef.current.find((x) => x.id === nid);
-        if (n) origins[nid] = { x: n.x, y: n.y };
-      }
+      const n = notesRef.current.find((x) => x.id === id);
+      if (n) origins[id] = { x: n.x, y: n.y };
       gesture.current = { type: "note", sx: e.clientX, sy: e.clientY, moved: false, ids, origins };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
-    [selected]
+    [beginPan, selected]
   );
-
-  const beginPan = useCallback((e: React.PointerEvent) => {
-    setMenu(null);
-    setConnectionPrompt(null);
-    setEditingId(null);
-    setEditingConnectionId(null);
-    setSelectedConnectionLabelId(null);
-    const v = viewRef.current;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    gesture.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: v.x, oy: v.y, moved: false };
-    document.body.classList.add("grabbing");
-  }, []);
 
   const onGroupPointerDown = useCallback(
     (e: React.PointerEvent, group: NoteGroup) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("input, textarea, button, [data-group-resize]")) return;
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        beginPan(e);
+        return;
+      }
       if (e.button !== 0) return;
       e.stopPropagation();
       setMenu(null);
+      setEditingId(null);
+      setEditingConnectionId(null);
       setSelectedGroupId(group.id);
-      setSelected(new Set(group.noteIds));
+      setSelected(new Set());
       setSelectedConnections(new Set());
       setSelectedConnectionLabelId(null);
       const origins: Record<string, { x: number; y: number }> = {};
@@ -1157,15 +1278,96 @@ export default function App() {
         const n = notesRef.current.find((note) => note.id === id);
         if (n) origins[id] = { x: n.x, y: n.y };
       }
-      gesture.current = { type: "group", sx: e.clientX, sy: e.clientY, moved: false, groupId: group.id, ids: group.noteIds, origins };
+      gesture.current = {
+        type: "group",
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+        groupId: group.id,
+        ids: group.noteIds,
+        origins,
+        groupOrigin: { x: group.x, y: group.y },
+      };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    []
+    [beginPan]
+  );
+
+  const startGroupResize = useCallback(
+    (e: React.PointerEvent, group: NoteGroup, handle: ResizeHandle) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setMenu(null);
+      setEditingId(null);
+      setEditingGroupId(null);
+      setSelectedGroupId(group.id);
+      setSelected(new Set());
+      setSelectedConnections(new Set());
+      setSelectedConnectionLabelId(null);
+      const start = { x: group.x, y: group.y, width: group.width, height: group.height };
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let next = start;
+
+      const computeNext = (ev: PointerEvent) => {
+        const zoom = viewRef.current.zoom;
+        const dx = (ev.clientX - sx) / zoom;
+        const dy = (ev.clientY - sy) / zoom;
+        let x = start.x;
+        let y = start.y;
+        let width = start.width;
+        let height = start.height;
+        if (handle.includes("e")) width = start.width + dx;
+        if (handle.includes("w")) {
+          width = start.width - dx;
+          x = start.x + dx;
+        }
+        if (handle.includes("s")) height = start.height + dy;
+        if (handle.includes("n")) {
+          height = start.height - dy;
+          y = start.y + dy;
+        }
+        if (width < MIN_GROUP_W) {
+          if (handle.includes("w")) x -= MIN_GROUP_W - width;
+          width = MIN_GROUP_W;
+        }
+        if (width > MAX_GROUP_W) {
+          if (handle.includes("w")) x -= MAX_GROUP_W - width;
+          width = MAX_GROUP_W;
+        }
+        if (height < MIN_GROUP_H) {
+          if (handle.includes("n")) y -= MIN_GROUP_H - height;
+          height = MIN_GROUP_H;
+        }
+        if (height > MAX_GROUP_H) {
+          if (handle.includes("n")) y -= MAX_GROUP_H - height;
+          height = MAX_GROUP_H;
+        }
+        return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+      };
+
+      const move = (ev: PointerEvent) => {
+        next = computeNext(ev);
+        setGroups((prev) => prev.map((g) => (g.id === group.id ? { ...g, ...next } : g)));
+      };
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        next = computeNext(ev);
+        const finalGroups = groupsRef.current.map((g) => (g.id === group.id ? { ...g, ...next } : g));
+        setGroups(syncGroupMembership(finalGroups, notesRef.current));
+        persistSoon();
+      };
+
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [persistSoon]
   );
 
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
     const t = e.target as HTMLElement;
-    if (e.button !== 2 && t.closest("[data-note]")) setMenu(null);
+    if (e.button !== 2 && t.closest("[data-note], [data-group]")) setMenu(null);
   }, []);
 
   const onPointerDown = useCallback(
@@ -1182,6 +1384,7 @@ export default function App() {
       setMenu(null);
       setConnectionPrompt(null);
       setEditingId(null);
+      setEditingGroupId(null);
       setEditingConnectionId(null);
       setSelectedConnectionLabelId(null);
       const v = viewRef.current;
@@ -1284,6 +1487,15 @@ export default function App() {
             : n
         )
       );
+      if (g.type === "group") {
+        setGroups((prev) =>
+          prev.map((group) =>
+            group.id === g.groupId
+              ? { ...group, x: Math.round(g.groupOrigin.x + dx), y: Math.round(g.groupOrigin.y + dy) }
+              : group
+          )
+        );
+      }
     }
   }, [applyView, connectionPoints]);
 
@@ -1311,13 +1523,21 @@ export default function App() {
           const v = viewRef.current;
           const dx = (e.clientX - g.sx) / v.zoom;
           const dy = (e.clientY - g.sy) / v.zoom;
-          setNotes((prev) =>
-            prev.map((n) =>
-              g.origins[n.id]
-                ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
-                : n
-            )
+          const finalNotes = notesRef.current.map((n) =>
+            g.origins[n.id]
+              ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
+              : n
           );
+          const finalGroupsBase =
+            g.type === "group"
+              ? groupsRef.current.map((group) =>
+                  group.id === g.groupId
+                    ? { ...group, x: Math.round(g.groupOrigin.x + dx), y: Math.round(g.groupOrigin.y + dy) }
+                    : group
+                )
+              : groupsRef.current;
+          setNotes(finalNotes);
+          setGroups(syncGroupMembership(finalGroupsBase, finalNotes));
           persistSoon();
         }
       }
@@ -1344,7 +1564,10 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, [contenteditable]")) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedConnectionLabelId) {
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedGroupId) {
+        e.preventDefault();
+        deleteGroup(selectedGroupId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selectedConnectionLabelId) {
         e.preventDefault();
         clearConnectionLabel(selectedConnectionLabelId);
       } else if ((e.key === "Delete" || e.key === "Backspace") && (selected.size || selectedConnections.size)) {
@@ -1362,6 +1585,7 @@ export default function App() {
         setConnectionPrompt(null);
         setDeletePrompt(null);
         setEditingId(null);
+        setEditingGroupId(null);
         setEditingConnectionId(null);
         setSelectedConnectionLabelId(null);
         setDraftConnection(null);
@@ -1378,7 +1602,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, selectedConnections, selectedConnectionLabelId, clearConnectionLabel, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
+  }, [selected, selectedConnections, selectedConnectionLabelId, selectedGroupId, clearConnectionLabel, deleteGroup, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
 
   /* -------------------------- context menus ------------------------- */
   const clampMenu = (x: number, y: number, estH: number) => ({
@@ -1608,6 +1832,8 @@ export default function App() {
         ids = [id];
         setSelected(new Set([id]));
       }
+      setSelectedGroupId(null);
+      setEditingGroupId(null);
       const multi = ids.length > 1;
       const colorShared =
         notesRef.current.find((n) => n.id === id)?.color ?? "slate";
@@ -1659,17 +1885,16 @@ export default function App() {
       e.preventDefault();
       e.stopPropagation();
       setSelectedGroupId(group.id);
-      setSelected(new Set(group.noteIds));
+      setSelected(new Set());
       setSelectedConnections(new Set());
+      setSelectedConnectionLabelId(null);
+      setEditingId(null);
       const rows: MenuRow[] = [
         { type: "label", text: group.title || "گروه" },
         {
           icon: TextCursorInput,
-          label: "تغییر نام گروه",
-          onClick: () => {
-            const title = window.prompt("نام گروه:", group.title || "گروه");
-            if (title !== null) updateGroup(group.id, { title: title.trim() || "گروه" });
-          },
+          label: "تغییر نام گروه در جای خودش",
+          onClick: () => setEditingGroupId(group.id),
         },
         { type: "label", text: "رنگ گروه" },
         { type: "swatches", current: group.color, onPick: (color) => updateGroup(group.id, { color }) },
@@ -1689,6 +1914,8 @@ export default function App() {
       const connection = connectionsRef.current.find((c) => c.id === id);
       if (!connection) return;
       setSelected(new Set());
+      setSelectedGroupId(null);
+      setEditingGroupId(null);
       setSelectedConnections(new Set([id]));
       setSelectedConnectionLabelId(null);
       const pts = connectionPoints(connection);
@@ -1728,7 +1955,7 @@ export default function App() {
         suppressCtx.current = false;
         return;
       }
-      if (t.closest("[data-note], [data-connection-label]")) return; // handled by NoteCard/connection label
+      if (t.closest("[data-note], [data-group], [data-connection-label]")) return; // handled by NoteCard/group/connection label
       openCanvasMenu(e.clientX, e.clientY);
     },
     [openCanvasMenu]
@@ -1796,6 +2023,8 @@ export default function App() {
               event.stopPropagation();
               setSelected(new Set());
               setEditingId(null);
+              setEditingGroupId(null);
+              setSelectedGroupId(null);
               setSelectedConnectionLabelId(null);
               setEditingConnectionId(null);
               setSelectedConnections((prev) => {
@@ -1888,31 +2117,84 @@ export default function App() {
           })()}
         </svg>
         {groups.map((group) => {
-          const box = groupBounds(group, notes);
-          if (!box) return null;
+          const box = groupBounds(group);
           const hex = colorHex(group.color);
           const isSelected = selectedGroupId === group.id;
+          const isEditingGroup = editingGroupId === group.id;
           return (
             <div
               key={group.id}
               data-group={group.id}
-              className={`note-group absolute z-[1] ${isSelected ? "note-group-selected" : ""}`}
+              className={`note-group group absolute z-[-10] ${isSelected ? "note-group-selected" : ""}`}
               style={{
                 left: box.x,
                 top: box.y,
                 width: box.width,
                 height: box.height,
+                zIndex: -10,
                 ["--group-color" as any]: hex,
               }}
               onPointerDown={(e) => onGroupPointerDown(e, group)}
               onContextMenu={(e) => onGroupContextMenu(e, group)}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                const title = window.prompt("نام گروه:", group.title || "گروه");
-                if (title !== null) updateGroup(group.id, { title: title.trim() || "گروه" });
+                setSelectedGroupId(group.id);
+                setSelected(new Set());
+                setEditingGroupId(group.id);
               }}
             >
-              <div className="note-group-title">{group.title || "گروه"}</div>
+              <div
+                className="note-group-title"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedGroupId(group.id);
+                  setSelected(new Set());
+                  setEditingGroupId(group.id);
+                }}
+              >
+                {isEditingGroup ? (
+                  <input
+                    autoFocus
+                    dir="auto"
+                    className="note-group-title-input"
+                    value={group.title}
+                    placeholder="نام گروه"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => updateGroup(group.id, { title: e.target.value })}
+                    onBlur={() => {
+                      if (!group.title.trim()) updateGroup(group.id, { title: "گروه" });
+                      setEditingGroupId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingGroupId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  group.title || "گروه"
+                )}
+              </div>
+              <div data-group-resize className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                {groupResizeHandles.map((handle) => (
+                  <button
+                    key={handle.id}
+                    type="button"
+                    data-group-resize
+                    title="تغییر اندازه گروه"
+                    className={`group-resize-handle absolute rounded-xl ${handle.className}`}
+                    style={{ cursor: handle.cursor }}
+                    onPointerDown={(e) => startGroupResize(e, group, handle.id)}
+                  />
+                ))}
+              </div>
             </div>
           );
         })}
@@ -2012,7 +2294,14 @@ export default function App() {
             editing={editingId === n.id}
             onChange={updateNote}
             onDelete={(id) => deleteIds([id])}
-            onRequestEdit={(id) => setEditingId(id)}
+            onRequestEdit={(id) => {
+              setEditingId(id);
+              setEditingGroupId(null);
+              setSelected(new Set([id]));
+              setSelectedGroupId(null);
+              setSelectedConnections(new Set());
+              setSelectedConnectionLabelId(null);
+            }}
             onCopy={copyNoteById}
             onDragStart={onNoteDragStart}
             onConnectorDragStart={onConnectorDragStart}
