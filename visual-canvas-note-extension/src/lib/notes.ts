@@ -11,6 +11,7 @@ export const MAX_NOTE_H = 2160;
 export function createNote(partial: Partial<Note> = {}): Note {
   return {
     id: uid(),
+    kind: "plain",
     title: "",
     text: "",
     x: 0,
@@ -26,6 +27,7 @@ export function createNote(partial: Partial<Note> = {}): Note {
 export function noteFromPending(p: PendingNote, index: number): Note {
   const accent = PALETTE[(index % (PALETTE.length - 1)) + 1]; // skip slate, colorful web notes
   return createNote({
+    kind: p.html ? "html" : "plain",
     title: "",
     text: p.text,
     html: p.html,

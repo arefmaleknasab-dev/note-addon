@@ -1,11 +1,17 @@
 export type ConnectionSide = "top" | "right" | "bottom" | "left";
 export type ConnectionDirection = "none" | "forward" | "both";
 
+export type NoteKind = "plain" | "html";
+export type NoteOverflow = "hidden" | "visible" | "auto" | "scroll";
+
 export interface Note {
   id: string;
+  kind?: NoteKind;
   title: string;
   text: string;
   html?: string;
+  css?: string;
+  overflow?: NoteOverflow;
   x: number;
   y: number;
   width: number;

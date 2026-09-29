@@ -36,6 +36,7 @@ import {
   Upload,
 } from "lucide-react";
 import NoteCard from "./components/NoteCard";
+import HtmlNoteCard from "./components/HtmlNoteCard";
 import ContextMenu, { type MenuRow } from "./components/ContextMenu";
 import Toolbar from "./components/Toolbar";
 import EmptyState from "./components/EmptyState";
@@ -65,7 +66,7 @@ import {
   viewCenter,
 } from "./lib/notes";
 import { colorHex, faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
-import { htmlToPlainText, sanitizeHtml } from "./lib/richText";
+import { htmlToPlainText, sanitizeCss, sanitizeHtml } from "./lib/richText";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const CONNECTION_COLOR = "#8b95a7";
@@ -525,13 +526,18 @@ export default function App() {
       const s = await loadState().catch(() => undefined);
       if (!alive) return;
       if (s?.notes) {
-        const savedNotes = s.notes.map((n) => ({
-          ...n,
-          html: sanitizeHtml(n.html),
-          text: n.text || (n.html ? htmlToPlainText(n.html) : ""),
-          width: n.width ?? DEFAULT_NOTE_W,
-          height: n.height ?? DEFAULT_NOTE_H,
-        }));
+        const savedNotes = s.notes.map((n) => {
+          const html = sanitizeHtml(n.html);
+          return {
+            ...n,
+            kind: n.kind ?? (html ? "html" : "plain"),
+            html,
+            css: sanitizeCss(n.css),
+            text: n.text || (html ? htmlToPlainText(html) : ""),
+            width: n.width ?? DEFAULT_NOTE_W,
+            height: n.height ?? DEFAULT_NOTE_H,
+          };
+        });
         setNotes(savedNotes);
         setConnections(s.connections ?? []);
         setGroups((s.groups ?? []).map((g) => normalizeGroup(g, savedNotes)).filter((g): g is NoteGroup => Boolean(g)));
@@ -597,6 +603,32 @@ export default function App() {
     window.setTimeout(() => setAutoFocusId(null), 1600);
   }, []);
 
+  const addHtmlNoteAt = useCallback((wx?: number, wy?: number) => {
+    const c = viewCenter(viewRef.current);
+    const html = `<article dir="rtl"><h2>عنوان سند HTML</h2><p>این باکس جدید یک سند HTML واقعی است. متن، لینک، لیست، جدول، تصویر، و CSS اختصاصی را داخل آن ویرایش کنید.</p><ul><li>آیتم اول</li><li>آیتم دوم</li></ul></article>`;
+    const n = createNote({
+      kind: "html",
+      title: "سند HTML",
+      text: htmlToPlainText(html),
+      html,
+      css: "article { line-height: 1.8; }\nh2 { margin: 0 0 8px; }",
+      width: 560,
+      height: 430,
+      color: "violet",
+      x: wx ?? c.x - 280,
+      y: wy ?? c.y - 160,
+    });
+    setNotes((prev) => {
+      const next = [...prev, n];
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
+    setSelected(new Set([n.id]));
+    setEditingId(n.id);
+    setAutoFocusId(n.id);
+    window.setTimeout(() => setAutoFocusId(null), 1600);
+  }, []);
+
   const addRichNotes = useCallback(
     (items: Array<{ text: string; html?: string }>) => {
       const clean = items.reduce<Array<{ text: string; html?: string }>>((acc, item) => {
@@ -616,6 +648,7 @@ export default function App() {
       const fresh = clean.map((item, i) => {
         const size = estimateNoteSize(item.text);
         const note = createNote({
+          kind: item.html ? "html" : "plain",
           text: item.text,
           html: item.html,
           ...size,
@@ -783,8 +816,11 @@ export default function App() {
           return {
             ...createNote(n),
             id: nextId,
+            kind: n.kind ?? (html ? "html" : "plain"),
             text: n.text || (html ? htmlToPlainText(html) : ""),
             html,
+            css: sanitizeCss(n.css),
+            overflow: n.overflow,
             width: clamp(n.width ?? DEFAULT_NOTE_W, MIN_NOTE_W, MAX_NOTE_W),
             height: clamp(n.height ?? DEFAULT_NOTE_H, MIN_NOTE_H, MAX_NOTE_H),
             x: Number.isFinite(n.x) ? Math.round(n.x) : 0,
@@ -1871,6 +1907,11 @@ export default function App() {
           hint: "دابل‌کلیک",
           onClick: () => addNoteAt((x - v.x) / v.zoom, (y - v.y) / v.zoom),
         },
+        {
+          icon: FilePlus,
+          label: "باکس HTML / سند کوچک",
+          onClick: () => addHtmlNoteAt((x - v.x) / v.zoom, (y - v.y) / v.zoom),
+        },
         { icon: ClipboardPaste, label: "بارگذاری کلیپ‌بورد به یادداشت‌های جداگانه", onClick: () => void loadClipboardAsNotes() },
         { type: "sep" },
         { icon: Download, label: "ذخیره همه در فایل JSON", onClick: () => exportNotesToFile() },
@@ -1884,7 +1925,25 @@ export default function App() {
       ];
       setMenu({ ...clampMenu(x, y, 220), rows });
     },
-    [addNoteAt, exportNotesToFile, loadClipboardAsNotes, openImportFile, selected]
+    [addHtmlNoteAt, addNoteAt, exportNotesToFile, loadClipboardAsNotes, openImportFile, selected]
+  );
+
+  const focusNoteById = useCallback(
+    (noteId: string) => {
+      const note = notesRef.current.find((n) => n.id === noteId);
+      if (!note) return;
+      const { width, height } = noteSize(note);
+      const zoom = clamp(Math.max(viewRef.current.zoom, 1.18), MIN_ZOOM, 1.65);
+      viewRef.current.zoom = zoom;
+      viewRef.current.x = window.innerWidth / 2 - (note.x + width / 2) * zoom;
+      viewRef.current.y = window.innerHeight / 2 - (note.y + height / 2) * zoom;
+      applyView();
+      persistSoon();
+      setSelected(new Set([note.id]));
+      setSelectedGroupId(null);
+      push("info", "یادداشت مقصد نمایش داده شد");
+    },
+    [applyView, persistSoon, push]
   );
 
   const focusConnectedNote = useCallback(
@@ -2373,34 +2432,38 @@ export default function App() {
             </div>
           );
         })}
-        {notes.map((n) => (
-          <NoteCard
-            key={n.id}
-            note={n}
-            selected={selected.has(n.id)}
-            zoom={zoomLabel}
-            autoFocusId={autoFocusId}
-            recentId={recentId}
-            editing={editingId === n.id}
-            onChange={updateNote}
-            onDelete={(id) => deleteIds([id])}
-            onRequestEdit={(id) => {
+        {notes.map((n) => {
+          const common = {
+            key: n.id,
+            note: n,
+            selected: selected.has(n.id),
+            zoom: zoomLabel,
+            autoFocusId,
+            recentId,
+            editing: editingId === n.id,
+            onChange: updateNote,
+            onDelete: (id: string) => deleteIds([id]),
+            onRequestEdit: (id: string) => {
               setEditingId(id);
               setEditingGroupId(null);
               setSelected(new Set([id]));
               setSelectedGroupId(null);
               setSelectedConnections(new Set());
               setSelectedConnectionLabelId(null);
-            }}
-            onCopy={copyNoteById}
-            onDragStart={onNoteDragStart}
-            onConnectorDragStart={onConnectorDragStart}
-            onEditorContextMenu={openEditorMenu}
-            onContextMenu={onNoteContextMenu}
-            registerRef={registerNoteRef}
-            interactive
-          />
-        ))}
+            },
+            onCopy: copyNoteById,
+            onDragStart: onNoteDragStart,
+            onConnectorDragStart,
+            onContextMenu: onNoteContextMenu,
+            registerRef: registerNoteRef,
+            interactive: true,
+          };
+          return n.kind === "html" ? (
+            <HtmlNoteCard {...common} onInternalLink={focusNoteById} />
+          ) : (
+            <NoteCard {...common} onEditorContextMenu={openEditorMenu} />
+          );
+        })}
       </div>
 
       {/* selection rectangle */}

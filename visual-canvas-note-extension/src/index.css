@@ -522,3 +522,186 @@ body {
   text-align: right;
   pointer-events: none;
 }
+
+.html-note-inner {
+  border: 1px solid color-mix(in srgb, var(--na) 36%, var(--border));
+}
+.html-note-header {
+  background: color-mix(in srgb, var(--na) 8%, transparent);
+}
+.html-note-toolbar {
+  max-height: 92px;
+  overflow-y: auto;
+}
+.html-note-tool,
+.html-note-select,
+.html-note-color,
+.html-note-action {
+  min-height: 24px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+.html-note-tool {
+  min-width: 25px;
+  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.html-note-tool:hover,
+.html-note-action:hover {
+  background: color-mix(in srgb, var(--na) 16%, var(--surface-2));
+}
+.html-note-select {
+  padding: 3px 6px;
+  max-width: 126px;
+}
+.html-note-color {
+  width: 26px;
+  padding: 1px;
+}
+.html-note-source-toggle {
+  color: color-mix(in srgb, var(--na) 78%, var(--text));
+}
+.html-document-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 72px;
+  outline: none;
+  border-radius: 12px;
+  padding: 2px 2px 8px;
+  caret-color: var(--na);
+}
+.html-document-editor[contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+}
+.html-source-area {
+  width: 100%;
+  min-height: 70px;
+  resize: none;
+  outline: none;
+  border-radius: 14px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-solid) 88%, #000 4%);
+  color: var(--text);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.html-note-action {
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.html-note-action-primary {
+  background: color-mix(in srgb, var(--na) 52%, #0ea5e9);
+  color: white;
+}
+.rich-note-content {
+  direction: auto;
+  unicode-bidi: plaintext;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.rich-note-content p,
+.rich-note-content div,
+.rich-note-content blockquote,
+.rich-note-content pre,
+.rich-note-content h1,
+.rich-note-content h2,
+.rich-note-content h3,
+.rich-note-content h4,
+.rich-note-content h5,
+.rich-note-content h6 {
+  margin: 0 0 0.55em;
+}
+.rich-note-content h1 { font-size: 1.7em; font-weight: 900; }
+.rich-note-content h2 { font-size: 1.45em; font-weight: 900; }
+.rich-note-content h3 { font-size: 1.25em; font-weight: 850; }
+.rich-note-content ul,
+.rich-note-content ol {
+  margin: 0.35em 0 0.65em;
+  padding-inline-start: 0;
+  padding-inline-end: 0;
+  list-style-position: inside;
+}
+.rich-note-content ul { list-style-type: disc; }
+.rich-note-content ol { list-style-type: decimal; }
+.rich-note-content li {
+  display: list-item;
+  margin: 0.18em 0;
+}
+.rich-note-content blockquote {
+  border-inline-start: 3px solid color-mix(in srgb, var(--na) 55%, var(--border));
+  padding-inline-start: 0.8em;
+  color: color-mix(in srgb, var(--text) 86%, var(--text-dim));
+}
+.rich-note-content pre,
+.rich-note-content code,
+.rich-note-content kbd,
+.rich-note-content samp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.rich-note-content pre {
+  background: color-mix(in srgb, var(--surface-2) 82%, #000 7%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  overflow: auto;
+}
+.rich-note-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.35em 0;
+  display: table;
+  overflow-x: auto;
+}
+.rich-note-content td,
+.rich-note-content th {
+  border: 1px solid var(--border);
+  padding: 0.25em 0.45em;
+  vertical-align: top;
+  min-width: 44px;
+}
+.rich-note-content img,
+.rich-note-content video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.rich-note-content audio {
+  width: 100%;
+}
+.rich-note-content a {
+  color: color-mix(in srgb, var(--na) 70%, #38bdf8);
+  text-decoration: underline;
+}
+.rich-note-content details {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin: 0.4em 0;
+}
+.rich-note-content summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+.rich-note-content input,
+.rich-note-content textarea,
+.rich-note-content select,
+.rich-note-content button {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 6px;
+  background: var(--surface-2);
+  color: var(--text);
+}
