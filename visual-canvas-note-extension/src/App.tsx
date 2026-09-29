@@ -14,7 +14,6 @@ import {
   FolderPlus,
   Hand,
   Heading1,
-  LayoutGrid,
   Heading2,
   Heading3,
   Heading4,
@@ -27,14 +26,11 @@ import {
   LoaderCircle,
   Maximize,
   Minus,
-  Moon,
   MousePointer2,
   Pilcrow,
   Plus,
   Quote,
-  RotateCcw,
   Scissors,
-  Sun,
   TextCursorInput,
   Trash2,
   Upload,
@@ -1005,34 +1001,11 @@ export default function App() {
     }
   }, [selectedNotes, push]);
 
-  const arrangeGrid = useCallback(() => {
-    const ids = selected.size ? selected : new Set(notesRef.current.map((n) => n.id));
-    const items = notesRef.current
-      .filter((n) => ids.has(n.id))
-      .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
-    if (items.length < 2) return;
-    const cols = Math.ceil(Math.sqrt(items.length));
-    const cellW = Math.max(...items.map((n) => n.width)) + 42;
-    const cellH = Math.max(...items.map((n) => n.height ?? DEFAULT_NOTE_H)) + 42;
-    const x0 = Math.min(...items.map((n) => n.x));
-    const y0 = Math.min(...items.map((n) => n.y));
-    const pos = new Map<string, { x: number; y: number }>();
-    items.forEach((n, i) =>
-      pos.set(n.id, { x: x0 + (i % cols) * cellW, y: y0 + Math.floor(i / cols) * cellH })
-    );
-    setNotes((prev) => {
-      const next = prev.map((n) => (pos.has(n.id) ? { ...n, ...pos.get(n.id)! } : n));
-      setGroups((groups) => syncGroupMembership(groups, next));
-      return next;
-    });
-    push("success", "یادداشت‌ها به‌صورت شبکه‌ای مرتب شد");
-  }, [selected, push]);
-
   const createGroupFromIds = useCallback(
     (ids: string[]) => {
       const unique = [...new Set(ids)].filter((id) => notesRef.current.some((n) => n.id === id));
-      if (unique.length < 2) {
-        push("error", "برای ساخت گروه حداقل دو یادداشت انتخاب کنید");
+      if (unique.length < 1) {
+        push("error", "برای ساخت گروه ابتدا یک یادداشت انتخاب کنید");
         return;
       }
       const box = groupBoxForNotes(unique, notesRef.current);
@@ -1569,7 +1542,12 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest("input, textarea, [contenteditable]")) return;
+      const editable = t?.closest("input, textarea, [contenteditable]") as HTMLElement | null;
+      if (editable) {
+        const textField = editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement;
+        const isReadOnlyTextField = textField && editable.readOnly;
+        if (!isReadOnlyTextField) return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedGroupId) {
         e.preventDefault();
         deleteGroup(selectedGroupId);
@@ -1774,7 +1752,6 @@ export default function App() {
           hint: "Ctrl+A",
           onClick: () => setSelected(new Set(notesRef.current.map((n) => n.id))),
         },
-        { icon: LayoutGrid, label: "چیدمان شبکه‌ای", onClick: () => arrangeGrid() },
         { icon: ClipboardPaste, label: "بارگذاری کلیپ‌بورد به یادداشت‌های جداگانه", onClick: () => void loadClipboardAsNotes() },
         { type: "sep" },
         { icon: Download, label: "ذخیره همه در فایل JSON", onClick: () => exportNotesToFile() },
@@ -1785,26 +1762,10 @@ export default function App() {
           onClick: () => exportNotesToFile([...selected]),
         },
         { icon: Upload, label: "بارگذاری فایل یادداشت", onClick: openImportFile },
-        { type: "sep" },
-        { icon: Maximize, label: "نمایش همه‌ی یادداشت‌ها", onClick: fitView },
-        {
-          icon: RotateCcw,
-          label: "بازنشانی نما (۱۰۰٪)",
-          onClick: () => {
-            viewRef.current = { x: 0, y: 0, zoom: 1 };
-            applyView();
-            persistSoon();
-          },
-        },
-        {
-          icon: themeRef.current === "dark" ? Sun : Moon,
-          label: themeRef.current === "dark" ? "حالت روشن" : "حالت تاریک",
-          onClick: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
-        },
       ];
-      setMenu({ ...clampMenu(x, y, 340), rows });
+      setMenu({ ...clampMenu(x, y, 260), rows });
     },
-    [addNoteAt, arrangeGrid, exportNotesToFile, fitView, loadClipboardAsNotes, openImportFile, selected, applyView, persistSoon]
+    [addNoteAt, exportNotesToFile, loadClipboardAsNotes, openImportFile, selected]
   );
 
   const focusConnectedNote = useCallback(
@@ -1844,6 +1805,12 @@ export default function App() {
       const colorShared =
         notesRef.current.find((n) => n.id === id)?.color ?? "slate";
       const rows: MenuRow[] = [
+        {
+          icon: FolderPlus,
+          label: multi ? "ساخت گروه از انتخاب‌شده‌ها" : "ساخت گروه برای این یادداشت",
+          onClick: () => createGroupFromIds(ids),
+        },
+        { type: "sep" },
         { type: "label", text: multi ? `${faNum(ids.length)} یادداشت انتخاب شده` : "یادداشت" },
         ...(multi
           ? [
@@ -1857,9 +1824,6 @@ export default function App() {
           onClick: () => duplicateIds(ids),
         },
         { icon: Download, label: multi ? "ذخیره انتخاب‌شده‌ها در فایل" : "ذخیره این یادداشت در فایل", onClick: () => exportNotesToFile(ids) },
-        ...(multi
-          ? [{ icon: FolderPlus, label: "ساخت گروه از انتخاب‌شده‌ها", onClick: () => createGroupFromIds(ids) } as MenuRow]
-          : []),
         {
           type: "submenu",
           icon: Maximize,

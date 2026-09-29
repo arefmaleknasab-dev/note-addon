@@ -272,7 +272,7 @@ function NoteCard({
             data-nodrag={editing ? "true" : undefined}
             dir="auto"
             value={note.title}
-            placeholder="عنوان یادداشت…"
+            placeholder="…عنوان یادداشت"
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
             className={`note-title-input text-[14.5px] font-bold leading-6 px-1 ${editing ? "cursor-text" : "cursor-grab select-none"}`}
@@ -327,7 +327,7 @@ function NoteCard({
             data-nodrag={editing ? "true" : undefined}
             dir="auto"
             value={note.text}
-            placeholder="متن خود را بنویسید…"
+            placeholder="…متن خود را بنویسید"
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
             className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}

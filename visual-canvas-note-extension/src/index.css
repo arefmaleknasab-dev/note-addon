@@ -146,6 +146,13 @@ body {
 .note-body-input::placeholder {
   color: var(--text-dim);
   opacity: 0.6;
+  direction: rtl;
+  text-align: right;
+}
+.note-title-input:placeholder-shown,
+.note-body-input:placeholder-shown {
+  direction: rtl;
+  text-align: right;
 }
 [data-note]:not([data-editing="true"]) .note-title-input,
 [data-note]:not([data-editing="true"]) .note-body-input {
