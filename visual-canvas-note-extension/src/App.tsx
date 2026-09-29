@@ -1703,11 +1703,13 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      const editable = t?.closest("input, textarea, [contenteditable]") as HTMLElement | null;
+      const editable = t?.closest("input, textarea, select, [contenteditable]") as HTMLElement | null;
       if (editable) {
         const textField = editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement;
         const isReadOnlyTextField = textField && editable.readOnly;
-        if (!isReadOnlyTextField) return;
+        const isSelect = editable instanceof HTMLSelectElement;
+        const isEditableDom = !textField && !isSelect && (editable.isContentEditable || editable.getAttribute("contenteditable") === "true");
+        if (!isReadOnlyTextField && (textField || isSelect || isEditableDom)) return;
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedGroupId) {
         e.preventDefault();
