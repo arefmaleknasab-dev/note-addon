@@ -396,7 +396,6 @@ function HtmlNoteCard({
         onDragStart(e, note.id);
       }}
       onContextMenu={(e) => {
-        if (editing && (e.target as HTMLElement).closest("input, textarea, [contenteditable='true']")) return;
         e.preventDefault();
         e.stopPropagation();
         onContextMenu(e, note.id);
