@@ -1,27 +1,45 @@
 import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
   Bold,
+  Clipboard,
+  ClipboardCopy,
+  ClipboardPaste,
   Code2,
+  ExternalLink,
   FileCode2,
+  FilePlus,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
   Image,
   Italic,
   Link,
   List,
+  ListChecks,
   ListOrdered,
+  Minus,
   Palette,
+  Pilcrow,
   Quote,
   Redo2,
   RemoveFormatting,
+  Scissors,
   Table,
+  TextCursorInput,
   Trash2,
   Underline,
   Undo2,
   Video,
 } from "lucide-react";
 import type { ConnectionSide, Note, NoteOverflow } from "../types";
+import ContextMenu, { type MenuRow } from "./ContextMenu";
 import { colorHex, PALETTE } from "../lib/constants";
 import {
   DEFAULT_NOTE_H,
@@ -122,6 +140,7 @@ function HtmlNoteCard({
   const [sourceHtml, setSourceHtml] = useState(note.html || htmlTemplate);
   const [sourceCss, setSourceCss] = useState(note.css || defaultCss);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -160,6 +179,20 @@ function HtmlNoteCard({
       setSourceCss(note.css || defaultCss);
     }
   }, [note.css, safeHtml, sourceMode]);
+
+  useEffect(() => {
+    if (!editing || sourceMode) setEditorMenu(null);
+  }, [editing, sourceMode]);
+
+  useEffect(() => {
+    if (!editorMenu) return;
+    const close = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.closest("[data-ui]")) return;
+      setEditorMenu(null);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [editorMenu]);
 
   const commit = (html?: string, css?: string) => {
     const safe = sanitizeHtml(html ?? editorRef.current?.innerHTML ?? "") || "";
@@ -230,6 +263,116 @@ function HtmlNoteCard({
 
   const insertCode = () => insertHtml(`<pre><code>code...</code></pre>`);
   const insertQuote = () => insertHtml(`<blockquote>نقل‌قول…</blockquote>`);
+
+  const selectAllEditor = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    el.focus();
+  };
+
+  const copySelected = () => {
+    editorRef.current?.focus();
+    document.execCommand("copy");
+  };
+
+  const cutSelected = () => {
+    editorRef.current?.focus();
+    document.execCommand("cut");
+    scheduleCommit();
+  };
+
+  const pasteRich = async () => {
+    editorRef.current?.focus();
+    try {
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          if (item.types.includes("text/html")) {
+            insertHtml(await (await item.getType("text/html")).text());
+            return;
+          }
+        }
+      }
+      const text = await navigator.clipboard.readText();
+      if (text) document.execCommand("insertText", false, text);
+      scheduleCommit();
+    } catch {
+      /* clipboard permission denied */
+    }
+  };
+
+  const pastePlain = async () => {
+    editorRef.current?.focus();
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) document.execCommand("insertText", false, text);
+      scheduleCommit();
+    } catch {
+      /* clipboard permission denied */
+    }
+  };
+
+  const removeLink = () => exec("unlink");
+
+  const openEditorContextMenu = (e: React.MouseEvent) => {
+    if (!editing || sourceMode) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    const rows: MenuRow[] = [
+      { icon: Link, label: "افزودن پیوند", onClick: insertLink },
+      { icon: ExternalLink, label: "ویرایش/افزودن پیوند بیرونی", onClick: insertLink },
+      { icon: Minus, label: "حذف پیوند", onClick: removeLink },
+      { icon: FilePlus, label: "فایل / تصویر / ویدئو / صوت", onClick: uploadFile },
+      { type: "sep" },
+      {
+        type: "submenu",
+        icon: Pilcrow,
+        label: "بندنوشت",
+        rows: [
+          { icon: List, label: "فهرست گلوله‌ای", onClick: () => exec("insertUnorderedList") },
+          { icon: ListOrdered, label: "فهرست شماره‌دار", onClick: () => exec("insertOrderedList") },
+          { icon: ListChecks, label: "فهرست کارها", onClick: () => insertHtml(`<ul><li><input type=\"checkbox\"> کار جدید</li></ul>`) },
+          { icon: Heading1, label: "۱ سرفصل", onClick: () => exec("formatBlock", "h1") },
+          { icon: Heading2, label: "۲ سرفصل", onClick: () => exec("formatBlock", "h2") },
+          { icon: Heading3, label: "۳ سرفصل", onClick: () => exec("formatBlock", "h3") },
+          { icon: Heading4, label: "۴ سرفصل", onClick: () => exec("formatBlock", "h4") },
+          { icon: Heading5, label: "۵ سرفصل", onClick: () => exec("formatBlock", "h5") },
+          { icon: Heading6, label: "۶ سرفصل", onClick: () => exec("formatBlock", "h6") },
+          { icon: Pilcrow, label: "تنه", onClick: () => exec("formatBlock", "p") },
+          { icon: Quote, label: "نقل‌قول", onClick: insertQuote },
+        ],
+      },
+      {
+        type: "submenu",
+        icon: TextCursorInput,
+        label: "درج",
+        rows: [
+          { icon: Minus, label: "جداکننده", onClick: () => insertHtml("<hr>") },
+          { icon: Image, label: "تصویر با URL", onClick: insertImageUrl },
+          { icon: Video, label: "ویدئو", onClick: () => insertMedia("video") },
+          { icon: Video, label: "صوت", onClick: () => insertMedia("audio") },
+          { icon: Table, label: "جدول", onClick: insertTable },
+          { icon: Code2, label: "بلوک کد", onClick: insertCode },
+          { icon: TextCursorInput, label: "تاریخ امروز", onClick: () => insertHtml(new Date().toLocaleDateString("fa-IR")) },
+          { icon: TextCursorInput, label: "زمان فعلی", onClick: () => insertHtml(new Date().toLocaleTimeString("fa-IR")) },
+        ],
+      },
+      { type: "sep" },
+      { icon: Scissors, label: "برش", onClick: cutSelected },
+      { icon: ClipboardCopy, label: "کپی", onClick: copySelected },
+      { icon: ClipboardPaste, label: "جایگذاری", onClick: () => void pasteRich() },
+      { icon: Clipboard, label: "جایگذاری به‌صورت متن ساده", onClick: () => void pastePlain() },
+      { icon: RemoveFormatting, label: "پاک کردن قالب‌بندی", onClick: () => exec("removeFormat") },
+      { icon: ClipboardCopy, label: "انتخاب همه", onClick: selectAllEditor },
+    ];
+    setEditorMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: Math.min(e.clientY, window.innerHeight - 430), rows });
+    return true;
+  };
 
   const addTableRow = () => {
     const cell = window.getSelection()?.anchorNode?.parentElement?.closest("td,th");
@@ -399,6 +542,7 @@ function HtmlNoteCard({
         onDragStart(e, note.id);
       }}
       onContextMenu={(e) => {
+        if (openEditorContextMenu(e)) return;
         e.preventDefault();
         e.stopPropagation();
         onContextMenu(e, note.id);
@@ -572,6 +716,7 @@ function HtmlNoteCard({
           </div>
         </>
       )}
+      {editorMenu && createPortal(<ContextMenu menu={editorMenu} onClose={() => setEditorMenu(null)} />, document.body)}
     </div>
   );
 }
