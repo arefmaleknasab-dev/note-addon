@@ -270,9 +270,10 @@ function NoteCard({
             ref={titleRef}
             data-editor
             data-nodrag={editing ? "true" : undefined}
-            dir="auto"
+            dir={note.title.trim() ? "auto" : "rtl"}
             value={note.title}
             placeholder="…عنوان یادداشت"
+            style={{ textAlign: note.title.trim() ? undefined : "right" }}
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
             className={`note-title-input text-[14.5px] font-bold leading-6 px-1 ${editing ? "cursor-text" : "cursor-grab select-none"}`}
@@ -325,9 +326,10 @@ function NoteCard({
             ref={bodyRef}
             data-editor
             data-nodrag={editing ? "true" : undefined}
-            dir="auto"
+            dir={note.text.trim() ? "auto" : "rtl"}
             value={note.text}
             placeholder="…متن خود را بنویسید"
+            style={{ textAlign: note.text.trim() ? undefined : "right" }}
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
             className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}

@@ -1746,12 +1746,6 @@ export default function App() {
           hint: "دابل‌کلیک",
           onClick: () => addNoteAt((x - v.x) / v.zoom, (y - v.y) / v.zoom),
         },
-        {
-          icon: MousePointer2,
-          label: "انتخاب همه‌ی یادداشت‌ها",
-          hint: "Ctrl+A",
-          onClick: () => setSelected(new Set(notesRef.current.map((n) => n.id))),
-        },
         { icon: ClipboardPaste, label: "بارگذاری کلیپ‌بورد به یادداشت‌های جداگانه", onClick: () => void loadClipboardAsNotes() },
         { type: "sep" },
         { icon: Download, label: "ذخیره همه در فایل JSON", onClick: () => exportNotesToFile() },
@@ -1763,7 +1757,7 @@ export default function App() {
         },
         { icon: Upload, label: "بارگذاری فایل یادداشت", onClick: openImportFile },
       ];
-      setMenu({ ...clampMenu(x, y, 260), rows });
+      setMenu({ ...clampMenu(x, y, 220), rows });
     },
     [addNoteAt, exportNotesToFile, loadClipboardAsNotes, openImportFile, selected]
   );
