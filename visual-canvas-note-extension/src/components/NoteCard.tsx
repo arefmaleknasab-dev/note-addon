@@ -296,7 +296,7 @@ function NoteCard({
             data-nodrag={editing ? "true" : undefined}
             dir={note.title.trim() ? "auto" : "rtl"}
             value={note.title}
-            placeholder="…عنوان یادداشت"
+            placeholder="عنوان یادداشت…"
             style={{ textAlign: note.title.trim() ? undefined : "right" }}
             readOnly={!editing}
             tabIndex={editing ? 0 : -1}
@@ -357,7 +357,7 @@ function NoteCard({
                 dir="auto"
                 tabIndex={0}
                 className="note-body-input rich-note-content rich-note-editor text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto cursor-text"
-                data-placeholder="…متن خود را بنویسید"
+                data-placeholder="متن خود را بنویسید…"
                 onInput={(e) => commitRichBody(e.currentTarget)}
                 onPaste={(e) => {
                   const html = e.clipboardData.getData("text/html");
@@ -386,7 +386,7 @@ function NoteCard({
               data-nodrag={editing ? "true" : undefined}
               dir={note.text.trim() ? "auto" : "rtl"}
               value={note.text}
-              placeholder="…متن خود را بنویسید"
+              placeholder="متن خود را بنویسید…"
               style={{ textAlign: note.text.trim() ? undefined : "right" }}
               readOnly={!editing}
               tabIndex={editing ? 0 : -1}
