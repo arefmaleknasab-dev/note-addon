@@ -28,6 +28,7 @@ export function noteFromPending(p: PendingNote, index: number): Note {
   return createNote({
     title: "",
     text: p.text,
+    html: p.html,
     color: accent.id,
     createdAt: p.createdAt || Date.now(),
   });

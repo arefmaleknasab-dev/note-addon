@@ -5,6 +5,7 @@ export interface Note {
   id: string;
   title: string;
   text: string;
+  html?: string;
   x: number;
   y: number;
   width: number;
@@ -48,6 +49,7 @@ export interface ViewState {
 export interface PendingNote {
   id: string;
   text: string;
+  html?: string;
   createdAt: number;
 }
 

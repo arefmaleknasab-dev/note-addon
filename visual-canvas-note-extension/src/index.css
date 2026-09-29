@@ -449,3 +449,68 @@ body {
   pointer-events: auto;
   background: transparent;
 }
+
+.rich-note-content {
+  direction: auto;
+  unicode-bidi: plaintext;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.rich-note-content p,
+.rich-note-content div,
+.rich-note-content blockquote,
+.rich-note-content pre,
+.rich-note-content h1,
+.rich-note-content h2,
+.rich-note-content h3,
+.rich-note-content h4,
+.rich-note-content h5,
+.rich-note-content h6 {
+  margin: 0 0 0.55em;
+}
+.rich-note-content ul,
+.rich-note-content ol {
+  margin: 0.35em 1.4em 0.65em 0;
+  padding-inline-start: 1.4em;
+  padding-inline-end: 0;
+}
+.rich-note-content li {
+  margin: 0.18em 0;
+}
+.rich-note-content blockquote {
+  border-inline-start: 3px solid color-mix(in srgb, var(--na) 55%, var(--border));
+  padding-inline-start: 0.8em;
+  color: color-mix(in srgb, var(--text) 86%, var(--text-dim));
+}
+.rich-note-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.35em 0;
+}
+.rich-note-content td,
+.rich-note-content th {
+  border: 1px solid var(--border);
+  padding: 0.25em 0.45em;
+  vertical-align: top;
+}
+.rich-note-content a {
+  color: color-mix(in srgb, var(--na) 70%, #38bdf8);
+  text-decoration: underline;
+}
+.rich-note-editor {
+  outline: none;
+  caret-color: var(--na);
+  border-radius: 10px;
+}
+.rich-note-editor:empty::before {
+  content: attr(data-placeholder);
+  display: block;
+  color: var(--text-dim);
+  opacity: 0.6;
+  direction: rtl;
+  text-align: right;
+  pointer-events: none;
+}

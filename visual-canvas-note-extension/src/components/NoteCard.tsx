@@ -11,6 +11,7 @@ import {
   MIN_NOTE_W,
   relativeTime,
 } from "../lib/notes";
+import { htmlToPlainText, plainTextToHtml, sanitizeHtml } from "../lib/richText";
 
 interface Props {
   note: Note;
@@ -74,10 +75,15 @@ function NoteCard({
   const [pickerOpen, setPickerOpen] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const richBodyRef = useRef<HTMLDivElement>(null);
+  const richEditInitRef = useRef<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const hex = colorHex(note.color);
   const width = note.width ?? DEFAULT_NOTE_W;
   const height = note.height ?? DEFAULT_NOTE_H;
+  const safeHtml = sanitizeHtml(note.html);
+  const hasRichBody = Boolean(safeHtml);
+  const bodyHtml = safeHtml ?? plainTextToHtml(note.text);
 
   useEffect(() => {
     if (autoFocusId === note.id) {
@@ -85,6 +91,22 @@ function NoteCard({
       return () => window.clearTimeout(t);
     }
   }, [autoFocusId, note.id]);
+
+  useEffect(() => {
+    if (!editing) {
+      richEditInitRef.current = null;
+      return;
+    }
+    if (!richBodyRef.current || richEditInitRef.current === note.id) return;
+    richBodyRef.current.innerHTML = bodyHtml;
+    richEditInitRef.current = note.id;
+  }, [bodyHtml, editing, note.id]);
+
+  const commitRichBody = (el: HTMLDivElement) => {
+    const html = sanitizeHtml(el.innerHTML);
+    const text = html ? htmlToPlainText(html) : el.innerText || "";
+    onChange(note.id, { text, html });
+  };
 
   const startResize = (e: React.PointerEvent, handle: ResizeHandle) => {
     e.stopPropagation();
@@ -241,9 +263,11 @@ function NoteCard({
       onWheel={(e) => {
         if (!editing) return;
         e.stopPropagation();
-        if (!(e.target as HTMLElement).closest("textarea")) {
+        const target = e.target as HTMLElement;
+        if (!target.closest("textarea, [contenteditable='true']")) {
           e.preventDefault();
           if (bodyRef.current) bodyRef.current.scrollTop += e.deltaY;
+          if (richBodyRef.current) richBodyRef.current.scrollTop += e.deltaY;
         }
       }}
       onContextMenu={(e) => {
@@ -322,25 +346,68 @@ function NoteCard({
 
         {/* body */}
         <div className="px-4 pb-2 flex-1 min-h-0">
-          <textarea
-            ref={bodyRef}
-            data-editor
-            data-nodrag={editing ? "true" : undefined}
-            dir={note.text.trim() ? "auto" : "rtl"}
-            value={note.text}
-            placeholder="…متن خود را بنویسید"
-            style={{ textAlign: note.text.trim() ? undefined : "right" }}
-            readOnly={!editing}
-            tabIndex={editing ? 0 : -1}
-            className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}
-            rows={2}
-            onChange={(e) => onChange(note.id, { text: e.target.value })}
-            onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "text") : openNoteMenu(e))}
-            onPointerDown={(e) => {
-              if (editing) e.stopPropagation();
-            }}
-            spellCheck={false}
-          />
+          {hasRichBody ? (
+            editing ? (
+              <div
+                ref={richBodyRef}
+                data-editor
+                data-nodrag="true"
+                contentEditable
+                suppressContentEditableWarning
+                dir="auto"
+                tabIndex={0}
+                className="note-body-input rich-note-content rich-note-editor text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto cursor-text"
+                data-placeholder="…متن خود را بنویسید"
+                onInput={(e) => commitRichBody(e.currentTarget)}
+                onPaste={(e) => {
+                  const html = e.clipboardData.getData("text/html");
+                  if (!html) return;
+                  e.preventDefault();
+                  const safe = sanitizeHtml(html);
+                  if (safe) document.execCommand("insertHTML", false, safe);
+                  else document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+                  commitRichBody(e.currentTarget);
+                }}
+                onContextMenu={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                spellCheck={false}
+              />
+            ) : (
+              <div
+                className="note-body-input rich-note-content text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto cursor-grab select-none"
+                dir="auto"
+                dangerouslySetInnerHTML={{ __html: bodyHtml }}
+              />
+            )
+          ) : (
+            <textarea
+              ref={bodyRef}
+              data-editor
+              data-nodrag={editing ? "true" : undefined}
+              dir={note.text.trim() ? "auto" : "rtl"}
+              value={note.text}
+              placeholder="…متن خود را بنویسید"
+              style={{ textAlign: note.text.trim() ? undefined : "right" }}
+              readOnly={!editing}
+              tabIndex={editing ? 0 : -1}
+              className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}
+              rows={2}
+              onChange={(e) => onChange(note.id, { text: e.target.value })}
+              onPaste={(e) => {
+                const html = e.clipboardData.getData("text/html");
+                if (!html) return;
+                const safe = sanitizeHtml(html);
+                if (!safe) return;
+                e.preventDefault();
+                onChange(note.id, { text: htmlToPlainText(safe), html: safe });
+              }}
+              onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "text") : openNoteMenu(e))}
+              onPointerDown={(e) => {
+                if (editing) e.stopPropagation();
+              }}
+              spellCheck={false}
+            />
+          )}
         </div>
 
         {/* footer */}

@@ -65,6 +65,7 @@ import {
   viewCenter,
 } from "./lib/notes";
 import { colorHex, faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
+import { htmlToPlainText, sanitizeHtml } from "./lib/richText";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const CONNECTION_COLOR = "#8b95a7";
@@ -462,9 +463,11 @@ export default function App() {
           : c.x - DEFAULT_NOTE_W / 2;
         const baseY = rightmost ? rightmost.y : c.y - DEFAULT_NOTE_H / 2;
         const fresh = items.map((p, i) => {
-          const size = estimateNoteSize(p.text);
+          const html = sanitizeHtml(p.html);
+          const text = (p.text || (html ? htmlToPlainText(html) : "")).trim();
+          const size = estimateNoteSize(text);
           const note = {
-            ...noteFromPending(p, base + i),
+            ...noteFromPending({ ...p, text, html }, base + i),
             ...size,
             x: Math.round(cursorX),
             y: Math.round(baseY + i * 34),
@@ -494,7 +497,13 @@ export default function App() {
       const s = await loadState().catch(() => undefined);
       if (!alive) return;
       if (s?.notes) {
-        const savedNotes = s.notes.map((n) => ({ ...n, width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H }));
+        const savedNotes = s.notes.map((n) => ({
+          ...n,
+          html: sanitizeHtml(n.html),
+          text: n.text || (n.html ? htmlToPlainText(n.html) : ""),
+          width: n.width ?? DEFAULT_NOTE_W,
+          height: n.height ?? DEFAULT_NOTE_H,
+        }));
         setNotes(savedNotes);
         setConnections(s.connections ?? []);
         setGroups((s.groups ?? []).map((g) => normalizeGroup(g, savedNotes)).filter((g): g is NoteGroup => Boolean(g)));
@@ -551,9 +560,14 @@ export default function App() {
     window.setTimeout(() => setAutoFocusId(null), 1600);
   }, []);
 
-  const addTextNotes = useCallback(
-    (texts: string[]) => {
-      const clean = texts.map((t) => t.trim()).filter(Boolean);
+  const addRichNotes = useCallback(
+    (items: Array<{ text: string; html?: string }>) => {
+      const clean = items.reduce<Array<{ text: string; html?: string }>>((acc, item) => {
+        const html = sanitizeHtml(item.html);
+        const text = (item.text || (html ? htmlToPlainText(html) : "")).trim();
+        if (text) acc.push({ text, html });
+        return acc;
+      }, []);
       if (!clean.length) return;
       const c = viewCenter(viewRef.current);
       const rightmost = notesRef.current.reduce<Note | null>((best, note) => {
@@ -562,10 +576,11 @@ export default function App() {
       }, null);
       let cursorX = rightmost ? rightmost.x + noteSize(rightmost).width + 64 : c.x - DEFAULT_NOTE_W / 2;
       const baseY = rightmost ? rightmost.y : c.y - DEFAULT_NOTE_H / 2;
-      const fresh = clean.map((text, i) => {
-        const size = estimateNoteSize(text);
+      const fresh = clean.map((item, i) => {
+        const size = estimateNoteSize(item.text);
         const note = createNote({
-          text,
+          text: item.text,
+          html: item.html,
           ...size,
           x: Math.round(cursorX),
           y: Math.round(baseY + i * 34),
@@ -588,12 +603,42 @@ export default function App() {
     [push]
   );
 
+  const addTextNotes = useCallback(
+    (texts: string[]) => addRichNotes(texts.map((text) => ({ text }))),
+    [addRichNotes]
+  );
+
+  const readClipboardRich = useCallback(async () => {
+    if (navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const htmlType = item.types.find((type) => type === "text/html");
+          if (!htmlType) continue;
+          const html = await (await item.getType(htmlType)).text();
+          const safe = sanitizeHtml(html);
+          if (!safe) continue;
+          return { text: htmlToPlainText(safe), html: safe };
+        }
+      } catch {
+        /* fall through to plain text */
+      }
+    }
+    const text = await navigator.clipboard.readText();
+    return { text };
+  }, []);
+
   const loadClipboardAsNotes = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      const normalized = text.replace(/\r\n/g, "\n").trim();
+      const rich = await readClipboardRich();
+      const html = sanitizeHtml(rich.html);
+      const normalized = (rich.text || (html ? htmlToPlainText(html) : "")).replace(/\r\n/g, "\n").trim();
       if (!normalized) {
         push("error", "کلیپ‌بورد خالی است");
+        return;
+      }
+      if (html) {
+        addRichNotes([{ text: normalized, html }]);
         return;
       }
       let parts = normalized.split(/\n\s*\n/g).map((p) => p.trim()).filter(Boolean);
@@ -605,7 +650,7 @@ export default function App() {
     } catch {
       push("error", "دسترسی خواندن کلیپ‌بورد داده نشد");
     }
-  }, [addTextNotes, push]);
+  }, [addRichNotes, addTextNotes, push, readClipboardRich]);
 
   const exportNotesToFile = useCallback(
     (ids?: string[]) => {
@@ -658,9 +703,12 @@ export default function App() {
           const nextId = existing.has(n.id) ? uid() : n.id;
           existing.add(nextId);
           idMap.set(n.id, nextId);
+          const html = sanitizeHtml(n.html);
           return {
             ...createNote(n),
             id: nextId,
+            text: n.text || (html ? htmlToPlainText(html) : ""),
+            html,
             width: clamp(n.width ?? DEFAULT_NOTE_W, MIN_NOTE_W, MAX_NOTE_W),
             height: clamp(n.height ?? DEFAULT_NOTE_H, MIN_NOTE_H, MAX_NOTE_H),
             x: Number.isFinite(n.x) ? Math.round(n.x) : 0,
