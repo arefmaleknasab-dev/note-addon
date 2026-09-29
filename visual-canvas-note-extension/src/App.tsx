@@ -318,8 +318,33 @@ type CanvasExport = {
 };
 
 type DeleteSnapshot = { notes: Note[]; connections: NoteConnection[]; groups: NoteGroup[] };
+type ExportDialogState = { ids?: string[]; groupId?: string; filename: string; suggestions: string[] };
 
 const safeFilenameDate = () => new Date().toISOString().replace(/[:.]/g, "-");
+const cleanFilename = (name: string) =>
+  name
+    .trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "")
+    .slice(0, 90);
+
+const uniqueNonEmpty = (values: string[]) => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = cleanFilename(value);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+};
+
+const systemTheme = (): Theme => {
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light";
+  return "dark";
+};
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -334,12 +359,13 @@ export default function App() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
-  const [theme, setTheme] = useState<Theme>("dark"); // dark by default
+  const [theme, setTheme] = useState<Theme>(() => systemTheme());
   const [loaded, setLoaded] = useState(false);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [recentId, setRecentId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
   const [deletePrompt, setDeletePrompt] = useState<string[] | null>(null);
+  const [exportDialog, setExportDialog] = useState<ExportDialogState | null>(null);
   const [zoomLabel, setZoomLabel] = useState(1);
   const [copyJob, setCopyJob] = useState<{ done: number; total: number } | null>(null);
   const copyingRef = useRef(false);
@@ -349,6 +375,7 @@ export default function App() {
   const notesRef = useRef<Note[]>([]);
   const connectionsRef = useRef<NoteConnection[]>([]);
   const groupsRef = useRef<NoteGroup[]>([]);
+  const selectedRef = useRef<Set<string>>(new Set());
   const themeRef = useRef<Theme>("dark");
   const canvasRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -365,6 +392,7 @@ export default function App() {
   notesRef.current = notes;
   connectionsRef.current = connections;
   groupsRef.current = groups;
+  selectedRef.current = selected;
   themeRef.current = theme;
 
   /* ------------------------------ view ------------------------------ */
@@ -507,7 +535,7 @@ export default function App() {
         setNotes(savedNotes);
         setConnections(s.connections ?? []);
         setGroups((s.groups ?? []).map((g) => normalizeGroup(g, savedNotes)).filter((g): g is NoteGroup => Boolean(g)));
-        setTheme(s.theme ?? "dark");
+        setTheme(systemTheme());
         if (s.view) viewRef.current = s.view;
       } else if (!(await getSeedFlag())) {
         await setSeedFlag();
@@ -533,6 +561,15 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!media) return;
+    const sync = () => setTheme(media.matches ? "light" : "dark");
+    sync();
+    media.addEventListener?.("change", sync);
+    return () => media.removeEventListener?.("change", sync);
+  }, []);
 
   /* --------------------------- note actions ------------------------- */
   const updateNote = useCallback((id: string, patch: Partial<Note>) => {
@@ -652,41 +689,80 @@ export default function App() {
     }
   }, [addRichNotes, addTextNotes, push, readClipboardRich]);
 
+  const exportSuggestions = useCallback((ids?: string[], groupId?: string) => {
+    const idSet = ids?.length ? new Set(ids) : null;
+    const outNotes = notesRef.current.filter((n) => !idSet || idSet.has(n.id));
+    const relatedGroups = groupId
+      ? groupsRef.current.filter((g) => g.id === groupId)
+      : groupsRef.current.filter((g) => !idSet || g.noteIds.some((id) => idSet.has(id)));
+    const titleSuggestions = outNotes.flatMap((note) => [note.title, note.text.split("\n")[0]]);
+    return uniqueNonEmpty([
+      ...relatedGroups.map((group) => group.title),
+      ...titleSuggestions,
+      idSet ? "یادداشت‌های انتخاب‌شده" : "همه یادداشت‌ها",
+      "persian-notes",
+    ]).slice(0, 5);
+  }, []);
+
+  const buildExportPayload = useCallback((ids?: string[]): CanvasExport | null => {
+    const idSet = ids?.length ? new Set(ids) : null;
+    const outNotes = notesRef.current.filter((n) => !idSet || idSet.has(n.id));
+    if (!outNotes.length) return null;
+    const outIds = new Set(outNotes.map((n) => n.id));
+    return {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      notes: outNotes,
+      connections: connectionsRef.current.filter((c) => outIds.has(c.from.noteId) && outIds.has(c.to.noteId)),
+      groups: idSet
+        ? groupsRef.current
+            .map((g) => ({ ...g, noteIds: g.noteIds.filter((id) => outIds.has(id)) }))
+            .filter((g) => g.noteIds.length > 0)
+        : groupsRef.current,
+      view: idSet ? undefined : viewRef.current,
+    };
+  }, []);
+
   const exportNotesToFile = useCallback(
-    (ids?: string[]) => {
-      const idSet = ids?.length ? new Set(ids) : null;
-      const outNotes = notesRef.current.filter((n) => !idSet || idSet.has(n.id));
-      if (!outNotes.length) {
+    (ids?: string[], groupId?: string) => {
+      const payload = buildExportPayload(ids);
+      if (!payload) {
         push("error", "یادداشتی برای ذخیره انتخاب نشده است");
         return;
       }
-      const outIds = new Set(outNotes.map((n) => n.id));
-      const payload: CanvasExport = {
-        format: EXPORT_FORMAT,
-        version: EXPORT_VERSION,
-        exportedAt: new Date().toISOString(),
-        notes: outNotes,
-        connections: connectionsRef.current.filter((c) => outIds.has(c.from.noteId) && outIds.has(c.to.noteId)),
-        groups: idSet
-          ? groupsRef.current
-              .map((g) => ({ ...g, noteIds: g.noteIds.filter((id) => outIds.has(id)) }))
-              .filter((g) => g.noteIds.length > 0)
-          : groupsRef.current,
-        view: idSet ? undefined : viewRef.current,
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${idSet ? "selected-notes" : "persian-notes"}-${safeFilenameDate()}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      push("success", idSet ? "انتخاب‌شده‌ها در فایل ذخیره شد" : "همه‌ی یادداشت‌ها در فایل ذخیره شد");
+      const suggestions = exportSuggestions(ids, groupId);
+      setMenu(null);
+      setExportDialog({ ids, groupId, suggestions, filename: suggestions[0] ?? (ids?.length ? "یادداشت‌های انتخاب‌شده" : "persian-notes") });
     },
-    [push]
+    [buildExportPayload, exportSuggestions, push]
   );
+
+  const confirmExport = useCallback(() => {
+    if (!exportDialog) return;
+    const payload = buildExportPayload(exportDialog.ids);
+    if (!payload) {
+      setExportDialog(null);
+      push("error", "یادداشتی برای ذخیره انتخاب نشده است");
+      return;
+    }
+    const idSet = exportDialog.ids?.length ? new Set(exportDialog.ids) : null;
+    const base = cleanFilename(exportDialog.filename) || exportDialog.suggestions[0] || (idSet ? "selected-notes" : "persian-notes");
+    const withExt = base.toLowerCase().endsWith(".json") ? base : `${base}-${safeFilenameDate()}.json`;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = withExt;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setExportDialog(null);
+    push("success", idSet ? "انتخاب‌شده‌ها در فایل ذخیره شد" : "همه‌ی یادداشت‌ها در فایل ذخیره شد");
+  }, [buildExportPayload, exportDialog, push]);
+
+  const cancelExport = useCallback(() => setExportDialog(null), []);
 
   const importProject = useCallback(
     (raw: unknown) => {
@@ -1263,9 +1339,10 @@ export default function App() {
         return;
       }
       let ids: string[];
+      const currentSelected = selectedRef.current;
       setSelectedConnections(new Set());
       setSelectedGroupId(null);
-      if (selected.has(id)) ids = [...selected];
+      if (currentSelected.has(id)) ids = [...currentSelected];
       else {
         ids = [id];
         setSelected(new Set([id]));
@@ -1278,7 +1355,7 @@ export default function App() {
       gesture.current = { type: "note", sx: e.clientX, sy: e.clientY, moved: false, ids, origins };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
-    [beginPan, selected]
+    [beginPan]
   );
 
   const onGroupPointerDown = useCallback(
@@ -1911,7 +1988,7 @@ export default function App() {
         { type: "label", text: "رنگ گروه" },
         { type: "swatches", current: group.color, onPick: (color) => updateGroup(group.id, { color }) },
         { type: "sep" },
-        { icon: Download, label: "ذخیره یادداشت‌های این گروه", onClick: () => exportNotesToFile(group.noteIds) },
+        { icon: Download, label: "ذخیره یادداشت‌های این گروه", onClick: () => exportNotesToFile(group.noteIds, group.id) },
         { icon: Trash2, label: "حذف گروه", danger: true, onClick: () => deleteGroup(group.id) },
       ];
       setMenu({ ...clampMenu(e.clientX, e.clientY, 330), rows });
@@ -2412,6 +2489,73 @@ export default function App() {
                   onClick={confirmDelete}
                 >
                   حذف
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {exportDialog && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelExport}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-md shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">نام فایل ذخیره</h3>
+              <p className="text-[12.5px] leading-6 mb-3" style={{ color: "var(--text-dim)" }}>
+                قبل از ذخیره، نام فایل را وارد کنید یا یکی از پیشنهادها را انتخاب کنید.
+              </p>
+              <input
+                autoFocus
+                dir="auto"
+                value={exportDialog.filename}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-3"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="نام فایل"
+                onChange={(e) => setExportDialog((state) => (state ? { ...state, filename: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmExport();
+                  else if (e.key === "Escape") cancelExport();
+                }}
+              />
+              <div className="flex flex-wrap gap-1.5 mb-5">
+                {exportDialog.suggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold transition-colors cursor-pointer"
+                    style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                    onClick={() => setExportDialog((state) => (state ? { ...state, filename: suggestion } : state))}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelExport}
+                >
+                  لغو
+                </button>
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-sky-500 hover:bg-sky-600 transition-colors cursor-pointer"
+                  onClick={confirmExport}
+                >
+                  ذخیره فایل
                 </button>
               </div>
             </motion.div>

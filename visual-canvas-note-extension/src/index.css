@@ -472,11 +472,19 @@ body {
 }
 .rich-note-content ul,
 .rich-note-content ol {
-  margin: 0.35em 1.4em 0.65em 0;
-  padding-inline-start: 1.4em;
+  margin: 0.35em 0 0.65em;
+  padding-inline-start: 0;
   padding-inline-end: 0;
+  list-style-position: inside;
+}
+.rich-note-content ul {
+  list-style-type: disc;
+}
+.rich-note-content ol {
+  list-style-type: decimal;
 }
 .rich-note-content li {
+  display: list-item;
   margin: 0.18em 0;
 }
 .rich-note-content blockquote {
