@@ -141,7 +141,10 @@ function HtmlNoteCard({
   }, [autoFocusId, note.id]);
 
   useEffect(() => {
-    if (!editing) setSourceMode(false);
+    if (!editing) {
+      setSourceMode(false);
+      if (editorRef.current) delete editorRef.current.dataset.loadedFor;
+    }
   }, [editing]);
 
   useEffect(() => {
@@ -166,7 +169,7 @@ function HtmlNoteCard({
 
   const scheduleCommit = () => {
     window.clearTimeout(inputTimer.current);
-    inputTimer.current = window.setTimeout(() => commit(), 450);
+    commit();
   };
 
   const exec = (command: string, value?: string) => {
