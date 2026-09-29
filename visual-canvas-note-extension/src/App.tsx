@@ -1241,13 +1241,19 @@ export default function App() {
         });
         return;
       }
-      const ids = [id];
+      let ids: string[];
       setSelectedConnections(new Set());
       setSelectedGroupId(null);
-      if (!selected.has(id) || selected.size !== 1) setSelected(new Set([id]));
+      if (selected.has(id)) ids = [...selected];
+      else {
+        ids = [id];
+        setSelected(new Set([id]));
+      }
       const origins: Record<string, { x: number; y: number }> = {};
-      const n = notesRef.current.find((x) => x.id === id);
-      if (n) origins[id] = { x: n.x, y: n.y };
+      for (const nid of ids) {
+        const n = notesRef.current.find((x) => x.id === nid);
+        if (n) origins[nid] = { x: n.x, y: n.y };
+      }
       gesture.current = { type: "note", sx: e.clientX, sy: e.clientY, moved: false, ids, origins };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
@@ -2002,7 +2008,7 @@ export default function App() {
 
       {/* world */}
       <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
-        <svg className="absolute left-0 top-0 overflow-visible z-0" width="1" height="1">
+        <svg className="absolute left-0 top-0 overflow-visible z-[5]" width="1" height="1">
           <defs>
             <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
               <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
@@ -2125,13 +2131,13 @@ export default function App() {
             <div
               key={group.id}
               data-group={group.id}
-              className={`note-group group absolute z-[-10] ${isSelected ? "note-group-selected" : ""}`}
+              className={`note-group group absolute z-0 ${isSelected ? "note-group-selected" : ""}`}
               style={{
                 left: box.x,
                 top: box.y,
                 width: box.width,
                 height: box.height,
-                zIndex: -10,
+                zIndex: 0,
                 ["--group-color" as any]: hex,
               }}
               onPointerDown={(e) => onGroupPointerDown(e, group)}
@@ -2159,6 +2165,7 @@ export default function App() {
                     className="note-group-title-input"
                     value={group.title}
                     placeholder="نام گروه"
+                    style={{ width: `${Math.max(4, Math.min(28, Array.from(group.title || "نام گروه").length + 1))}ch` }}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
                     onFocus={(e) => e.currentTarget.select()}
@@ -2182,7 +2189,7 @@ export default function App() {
                   group.title || "گروه"
                 )}
               </div>
-              <div data-group-resize className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div data-group-resize className="absolute inset-0 pointer-events-none">
                 {groupResizeHandles.map((handle) => (
                   <button
                     key={handle.id}

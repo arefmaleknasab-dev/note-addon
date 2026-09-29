@@ -426,7 +426,6 @@ body {
 }
 
 .note-group-title-input {
-  width: min(220px, calc(100vw - 64px));
   max-width: 100%;
   border: 0;
   outline: 0;
@@ -442,23 +441,4 @@ body {
 .group-resize-handle {
   pointer-events: auto;
   background: transparent;
-}
-
-.group-resize-handle::after {
-  content: "";
-  position: absolute;
-  inset: 5px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--group-color) 55%, white 20%);
-  opacity: 0;
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--group-color) 22%, transparent);
-  transition: opacity .15s ease, transform .15s ease;
-  transform: scale(.78);
-}
-
-.note-group:hover .group-resize-handle::after,
-.note-group-selected .group-resize-handle::after,
-.group-resize-handle:hover::after {
-  opacity: .8;
-  transform: scale(1);
 }
