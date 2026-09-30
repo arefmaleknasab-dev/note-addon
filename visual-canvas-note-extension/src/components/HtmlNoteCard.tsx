@@ -190,8 +190,8 @@ function HtmlNoteCard({
       if ((event.target as HTMLElement | null)?.closest("[data-ui]")) return;
       setEditorMenu(null);
     };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
   }, [editorMenu]);
 
   const commit = (html?: string, css?: string) => {
