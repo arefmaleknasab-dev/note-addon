@@ -312,6 +312,53 @@ function HtmlNoteCard({
   const anchorFromSavedRange = () => elementFromRange(savedRangeRef.current)?.closest("a") as HTMLAnchorElement | null;
   const savedSelectionText = () => (isRangeInsideEditor(savedRangeRef.current) ? savedRangeRef.current?.toString() ?? "" : "");
 
+  const selectedListItem = () => elementFromRange(savedRangeRef.current)?.closest("li") as HTMLLIElement | null;
+
+  const listItemInnerHtml = (li: HTMLLIElement) => {
+    let clone = li.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('input[type="checkbox"]').forEach((input) => input.remove());
+    while (true) {
+      const meaningful = Array.from(clone.childNodes).filter(
+        (node) => node.nodeType !== Node.TEXT_NODE || Boolean(node.textContent?.trim())
+      );
+      if (meaningful.length !== 1 || !(meaningful[0] instanceof HTMLElement)) break;
+      const tag = meaningful[0].tagName.toLowerCase();
+      if (!["label", "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote"].includes(tag)) break;
+      clone = meaningful[0];
+    }
+    return clone.innerHTML.trim() || escapeHtml(clone.textContent || "") || "<br>";
+  };
+
+  const splitListItemIntoBlock = (li: HTMLLIElement, tag: string) => {
+    const list = li.parentElement;
+    if (!list || !["ul", "ol"].includes(list.tagName.toLowerCase())) return false;
+    const before = list.cloneNode(false) as HTMLElement;
+    const after = list.cloneNode(false) as HTMLElement;
+    let passedSelected = false;
+    Array.from(list.children).forEach((child) => {
+      if (child === li) {
+        passedSelected = true;
+        return;
+      }
+      if (child.tagName.toLowerCase() !== "li") return;
+      (passedSelected ? after : before).appendChild(child.cloneNode(true));
+    });
+    const block = document.createElement(tag === "pre" ? "pre" : tag);
+    block.innerHTML = listItemInnerHtml(li);
+    const fragment = document.createDocumentFragment();
+    if (before.children.length) fragment.appendChild(before);
+    fragment.appendChild(block);
+    if (after.children.length) fragment.appendChild(after);
+    list.replaceWith(fragment);
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+    return true;
+  };
+
   const commit = (html?: string, css?: string) => {
     const safe = sanitizeHtml(html ?? editorRef.current?.innerHTML ?? "") || "";
     const text = htmlToPlainText(safe);
@@ -333,6 +380,13 @@ function HtmlNoteCard({
   const formatBlock = (tag: string) => {
     restoreEditorSelection();
     const normalized = tag.toLowerCase();
+    const li = selectedListItem();
+    if (li && ["p", "pre", "h1", "h2", "h3", "h4", "h5", "h6"].includes(normalized)) {
+      if (splitListItemIntoBlock(li, normalized)) {
+        scheduleCommit();
+        return;
+      }
+    }
     const value = normalized === "p" ? "<p>" : `<${normalized}>`;
     if (!document.execCommand("formatBlock", false, value)) {
       document.execCommand("formatBlock", false, normalized.toUpperCase());
@@ -603,7 +657,7 @@ function HtmlNoteCard({
       { icon: RemoveFormatting, label: "پاک کردن قالب‌بندی", onClick: clearFormatting },
       { icon: ClipboardCopy, label: "انتخاب همه", onClick: selectAllEditor },
     ];
-    setEditorMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: Math.min(e.clientY, window.innerHeight - 430), rows });
+    setEditorMenu({ x: e.clientX, y: e.clientY, rows });
     return true;
   };
 
