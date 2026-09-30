@@ -320,6 +320,15 @@ type CanvasExport = {
 
 type DeleteSnapshot = { notes: Note[]; connections: NoteConnection[]; groups: NoteGroup[] };
 type ExportDialogState = { ids?: string[]; groupId?: string; filename: string; suggestions: string[] };
+type PlainLinkDialogState = {
+  id: string;
+  field: "title" | "text";
+  start: number;
+  end: number;
+  label: string;
+  url: string;
+  external: boolean;
+};
 
 const safeFilenameDate = () => new Date().toISOString().replace(/[:.]/g, "-");
 const cleanFilename = (name: string) =>
@@ -367,6 +376,7 @@ export default function App() {
   const [menu, setMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
   const [deletePrompt, setDeletePrompt] = useState<string[] | null>(null);
   const [exportDialog, setExportDialog] = useState<ExportDialogState | null>(null);
+  const [plainLinkDialog, setPlainLinkDialog] = useState<PlainLinkDialogState | null>(null);
   const [zoomLabel, setZoomLabel] = useState(1);
   const [copyJob, setCopyJob] = useState<{ done: number; total: number } | null>(null);
   const copyingRef = useRef(false);
@@ -586,6 +596,25 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const cancelPlainLinkDialog = useCallback(() => setPlainLinkDialog(null), []);
+
+  const confirmPlainLinkDialog = useCallback(() => {
+    if (!plainLinkDialog?.url.trim()) return;
+    const dialog = plainLinkDialog;
+    setNotes((prev) =>
+      prev.map((note) => {
+        if (note.id !== dialog.id) return note;
+        const value = String(note[dialog.field] ?? "");
+        const start = clamp(dialog.start, 0, value.length);
+        const end = clamp(dialog.end, start, value.length);
+        const label = dialog.label || (dialog.external ? "پیوند بیرونی" : "پیوند");
+        const markdown = `[${label}](${dialog.url.trim()})`;
+        return { ...note, [dialog.field]: value.slice(0, start) + markdown + value.slice(end) };
+      })
+    );
+    setPlainLinkDialog(null);
+  }, [plainLinkDialog]);
 
   const addNoteAt = useCallback((wx?: number, wy?: number) => {
     const c = viewCenter(viewRef.current);
@@ -1825,12 +1854,10 @@ export default function App() {
       };
 
       const insertLink = (external = false) => {
-        const url = window.prompt(external ? "آدرس پیوند بیرونی:" : "آدرس پیوند:", "https://");
-        if (!url) return;
         const start = el.selectionStart ?? 0;
         const end = el.selectionEnd ?? start;
         const label = el.value.slice(start, end) || (external ? "پیوند بیرونی" : "پیوند");
-        replaceSelection(`[${label}](${url})`, start + 1, start + 1 + label.length);
+        setPlainLinkDialog({ id, field, start, end, label, url: "", external });
       };
 
       const attachFile = () => {
@@ -2557,6 +2584,76 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {plainLinkDialog && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelPlainLinkDialog}
+          >
+            <motion.form
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-md shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+              onSubmit={(e) => {
+                e.preventDefault();
+                confirmPlainLinkDialog();
+              }}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">{plainLinkDialog.external ? "افزودن پیوند بیرونی" : "افزودن پیوند"}</h3>
+              <p className="text-[12.5px] leading-6 mb-3" style={{ color: "var(--text-dim)" }}>
+                آدرس پیوند را داخل خود برنامه وارد کنید.
+              </p>
+              <input
+                autoFocus
+                dir="ltr"
+                value={plainLinkDialog.url}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-3"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="https://example.com"
+                onChange={(e) => setPlainLinkDialog((state) => (state ? { ...state, url: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelPlainLinkDialog();
+                }}
+              />
+              <label className="block text-[11px] font-bold mb-1" style={{ color: "var(--text-dim)" }}>متن نمایشی</label>
+              <input
+                dir="auto"
+                value={plainLinkDialog.label}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-5"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="متن لینک"
+                onChange={(e) => setPlainLinkDialog((state) => (state ? { ...state, label: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelPlainLinkDialog();
+                }}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelPlainLinkDialog}
+                >
+                  لغو
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-sky-500 hover:bg-sky-600 transition-colors cursor-pointer"
+                >
+                  اعمال پیوند
+                </button>
+              </div>
+            </motion.form>
           </motion.div>
         )}
       </AnimatePresence>

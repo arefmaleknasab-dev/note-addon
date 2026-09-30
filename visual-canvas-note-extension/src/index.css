@@ -561,6 +561,17 @@ body {
 .html-note-select {
   padding: 3px 6px;
   max-width: 126px;
+  color-scheme: dark;
+}
+html.light .html-note-select {
+  color-scheme: light;
+}
+.html-note-select option {
+  background: var(--surface-solid);
+  color: var(--text);
+}
+.html-note-size-select {
+  max-width: 96px;
 }
 .html-note-color {
   width: 26px;
@@ -602,6 +613,55 @@ body {
   background: color-mix(in srgb, var(--na) 52%, #0ea5e9);
   color: white;
 }
+.html-note-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.26);
+}
+.html-note-dialog {
+  width: min(420px, calc(100vw - 28px));
+  border-radius: 20px;
+  padding: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+.html-note-dialog-title {
+  font-size: 14px;
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+.html-note-dialog-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim);
+}
+.html-note-dialog-field input {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-solid) 88%, #000 4%);
+  color: var(--text);
+  padding: 9px 10px;
+  outline: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+.html-note-dialog-field input:focus {
+  border-color: color-mix(in srgb, var(--na) 64%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--na) 18%, transparent);
+}
+.html-note-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
 .rich-note-content {
   direction: auto;
   unicode-bidi: plaintext;
@@ -634,6 +694,10 @@ body {
 }
 .rich-note-content ul { list-style-type: disc; }
 .rich-note-content ol { list-style-type: decimal; }
+.rich-note-content ul[data-list-type="task"] {
+  list-style: none;
+  padding-inline-start: 0;
+}
 .rich-note-content li {
   display: list-item;
   margin: 0.18em 0;

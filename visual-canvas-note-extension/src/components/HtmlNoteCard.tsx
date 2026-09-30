@@ -34,6 +34,7 @@ import {
   Table,
   TextCursorInput,
   Trash2,
+  Type,
   Underline,
   Undo2,
   Video,
@@ -50,7 +51,7 @@ import {
   MIN_NOTE_W,
   relativeTime,
 } from "../lib/notes";
-import { htmlToPlainText, plainTextToHtml, sanitizeCss, sanitizeHtml, scopeCss } from "../lib/richText";
+import { escapeHtml, htmlToPlainText, plainTextToHtml, sanitizeCss, sanitizeHtml, scopeCss } from "../lib/richText";
 
 interface Props {
   note: Note;
@@ -72,6 +73,33 @@ interface Props {
 }
 
 type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+type HtmlEditorDialog =
+  | { kind: "link"; url: string; text: string }
+  | { kind: "image"; url: string; alt: string }
+  | { kind: "media"; media: "video" | "audio"; url: string };
+
+const fontSizeOptions = [
+  { label: "۱۰", value: "10px" },
+  { label: "۱۲", value: "12px" },
+  { label: "۱۴", value: "14px" },
+  { label: "۱۶", value: "16px" },
+  { label: "۱۸", value: "18px" },
+  { label: "۲۴", value: "24px" },
+  { label: "۳۲", value: "32px" },
+  { label: "۴۰", value: "40px" },
+];
+
+const blockOptions = [
+  { label: "تنه", value: "p", icon: Pilcrow },
+  { label: "سرفصل ۱", value: "h1", icon: Heading1 },
+  { label: "سرفصل ۲", value: "h2", icon: Heading2 },
+  { label: "سرفصل ۳", value: "h3", icon: Heading3 },
+  { label: "سرفصل ۴", value: "h4", icon: Heading4 },
+  { label: "سرفصل ۵", value: "h5", icon: Heading5 },
+  { label: "سرفصل ۶", value: "h6", icon: Heading6 },
+  { label: "پیش‌قالب / کد", value: "pre", icon: Code2 },
+];
 
 const resizeHandles: { id: ResizeHandle; className: string; cursor: string }[] = [
   { id: "n", className: "top-0 left-5 right-5 h-2 -translate-y-1/2", cursor: "ns-resize" },
@@ -141,10 +169,12 @@ function HtmlNoteCard({
   const [sourceCss, setSourceCss] = useState(note.css || defaultCss);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
+  const [editorDialog, setEditorDialog] = useState<HtmlEditorDialog | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const inputTimer = useRef<number | undefined>(undefined);
+  const savedRangeRef = useRef<Range | null>(null);
   const width = note.width ?? DEFAULT_NOTE_W;
   const height = note.height ?? DEFAULT_NOTE_H;
   const hex = colorHex(note.color);
@@ -186,13 +216,101 @@ function HtmlNoteCard({
 
   useEffect(() => {
     if (!editorMenu) return;
-    const close = (event: PointerEvent) => {
+    const close = (event: Event) => {
       if ((event.target as HTMLElement | null)?.closest("[data-ui]")) return;
       setEditorMenu(null);
     };
-    window.addEventListener("pointerdown", close, true);
-    return () => window.removeEventListener("pointerdown", close, true);
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("mousedown", close, true);
+    document.addEventListener("click", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", close, true);
+      document.removeEventListener("mousedown", close, true);
+      document.removeEventListener("click", close, true);
+    };
   }, [editorMenu]);
+
+  const isRangeInsideEditor = (range: Range | null | undefined) => {
+    const editor = editorRef.current;
+    return Boolean(editor && range && editor.contains(range.commonAncestorContainer));
+  };
+
+  const rangeFromPoint = (x: number, y: number) => {
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
+    const position = doc.caretPositionFromPoint?.(x, y);
+    if (!position) return null;
+    const range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    range.collapse(true);
+    return range;
+  };
+
+  const saveEditorSelection = () => {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!isRangeInsideEditor(range)) return;
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const restoreEditorSelection = () => {
+    const editor = editorRef.current;
+    if (!editor) return false;
+    const selection = window.getSelection();
+    if (!selection) return false;
+    const current = selection.rangeCount ? selection.getRangeAt(0) : null;
+    if (current && isRangeInsideEditor(current)) {
+      savedRangeRef.current = current.cloneRange();
+      editor.focus({ preventScroll: true });
+      return true;
+    }
+    editor.focus({ preventScroll: true });
+    selection.removeAllRanges();
+    const range = savedRangeRef.current;
+    if (range && isRangeInsideEditor(range)) {
+      selection.addRange(range.cloneRange());
+      return true;
+    }
+    const fallback = document.createRange();
+    fallback.selectNodeContents(editor);
+    fallback.collapse(false);
+    selection.addRange(fallback);
+    savedRangeRef.current = fallback.cloneRange();
+    return true;
+  };
+
+  const saveRangeFromPoint = (x: number, y: number) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    const current = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (isRangeInsideEditor(current) && current && !current.collapsed) {
+      savedRangeRef.current = current.cloneRange();
+      return;
+    }
+    const range = rangeFromPoint(x, y);
+    if (!editor || !range || !editor.contains(range.commonAncestorContainer)) {
+      saveEditorSelection();
+      return;
+    }
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+  };
+
+  const elementFromRange = (range: Range | null | undefined) => {
+    if (!range) return null;
+    const node = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentNode;
+    return node instanceof HTMLElement ? node : null;
+  };
+
+  const anchorFromSavedRange = () => elementFromRange(savedRangeRef.current)?.closest("a") as HTMLAnchorElement | null;
+  const savedSelectionText = () => (isRangeInsideEditor(savedRangeRef.current) ? savedRangeRef.current?.toString() ?? "" : "");
 
   const commit = (html?: string, css?: string) => {
     const safe = sanitizeHtml(html ?? editorRef.current?.innerHTML ?? "") || "";
@@ -203,17 +321,64 @@ function HtmlNoteCard({
   const scheduleCommit = () => {
     window.clearTimeout(inputTimer.current);
     commit();
+    saveEditorSelection();
   };
 
   const exec = (command: string, value?: string) => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand(command, false, value);
     scheduleCommit();
   };
 
+  const formatBlock = (tag: string) => {
+    restoreEditorSelection();
+    const normalized = tag.toLowerCase();
+    const value = normalized === "p" ? "<p>" : `<${normalized}>`;
+    if (!document.execCommand("formatBlock", false, value)) {
+      document.execCommand("formatBlock", false, normalized.toUpperCase());
+    }
+    scheduleCommit();
+  };
+
   const insertHtml = (html: string) => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand("insertHTML", false, sanitizeHtml(html) || "");
+    scheduleCommit();
+  };
+
+  const applyInlineStyle = (styles: Partial<Record<"fontSize" | "color" | "backgroundColor", string>>, placeholder = "متن") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    restoreEditorSelection();
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+    const span = document.createElement("span");
+    Object.entries(styles).forEach(([key, value]) => {
+      if (value) span.style[key as any] = value;
+    });
+    if (range.collapsed) {
+      span.textContent = placeholder;
+      range.insertNode(span);
+    } else {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+    }
+    const next = document.createRange();
+    next.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(next);
+    savedRangeRef.current = next.cloneRange();
+    scheduleCommit();
+  };
+
+  const applyFontSize = (size: string) => applyInlineStyle({ fontSize: size });
+
+  const clearFormatting = () => {
+    restoreEditorSelection();
+    document.execCommand("removeFormat", false);
+    document.execCommand("unlink", false);
     scheduleCommit();
   };
 
@@ -230,31 +395,74 @@ function HtmlNoteCard({
     }, 0);
   };
 
-  const insertLink = () => {
-    const url = window.prompt("آدرس لینک یا #note-id:", "https://");
-    if (!url) return;
-    exec("createLink", url);
-    const sel = window.getSelection();
-    const anchor = sel?.anchorNode?.parentElement?.closest("a");
-    if (anchor) {
-      anchor.setAttribute("target", "_blank");
-      anchor.setAttribute("rel", "noopener noreferrer");
-    }
-    scheduleCommit();
+  const openLinkDialog = () => {
+    saveEditorSelection();
+    const anchor = anchorFromSavedRange();
+    setEditorDialog({ kind: "link", url: anchor?.getAttribute("href") || "", text: savedSelectionText() || anchor?.textContent || "" });
   };
 
+  const insertLink = () => openLinkDialog();
+
   const insertImageUrl = () => {
-    const url = window.prompt("آدرس تصویر:", "https://");
-    if (!url) return;
-    const alt = window.prompt("متن جایگزین:", "") || "";
-    insertHtml(`<img src="${url}" alt="${alt}" style="max-width:100%;height:auto;" />`);
+    saveEditorSelection();
+    setEditorDialog({ kind: "image", url: "", alt: "" });
   };
 
   const insertMedia = (type: "video" | "audio") => {
-    const url = window.prompt(type === "video" ? "آدرس ویدئو:" : "آدرس صوت:", "https://");
-    if (!url) return;
-    if (type === "video") insertHtml(`<video controls src="${url}" style="max-width:100%;height:auto;"></video>`);
-    else insertHtml(`<audio controls src="${url}" style="width:100%;"></audio>`);
+    saveEditorSelection();
+    setEditorDialog({ kind: "media", media: type, url: "" });
+  };
+
+  const updateEditorDialog = (patch: Partial<HtmlEditorDialog>) => {
+    setEditorDialog((current) => (current ? ({ ...current, ...patch } as HtmlEditorDialog) : current));
+  };
+
+  const applyEditorDialog = () => {
+    if (!editorDialog) return;
+    if (editorDialog.kind === "link") {
+      const url = editorDialog.url.trim();
+      if (!url) return;
+      const selectedText = savedSelectionText().trim();
+      const customText = editorDialog.text.trim();
+      const anchor = anchorFromSavedRange();
+      restoreEditorSelection();
+      if (anchor && editorRef.current?.contains(anchor)) {
+        anchor.setAttribute("href", url);
+        anchor.setAttribute("target", "_blank");
+        anchor.setAttribute("rel", "noopener noreferrer");
+        if (customText) anchor.textContent = customText;
+        scheduleCommit();
+      } else {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (selection && range && editorRef.current?.contains(range.commonAncestorContainer) && !range.collapsed && (!customText || customText === selectedText)) {
+          const nextAnchor = document.createElement("a");
+          nextAnchor.setAttribute("href", url);
+          nextAnchor.setAttribute("target", "_blank");
+          nextAnchor.setAttribute("rel", "noopener noreferrer");
+          nextAnchor.appendChild(range.extractContents());
+          range.insertNode(nextAnchor);
+          const next = document.createRange();
+          next.selectNodeContents(nextAnchor);
+          selection.removeAllRanges();
+          selection.addRange(next);
+          savedRangeRef.current = next.cloneRange();
+          scheduleCommit();
+        } else {
+          insertHtml(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(customText || selectedText || url)}</a>`);
+        }
+      }
+    } else if (editorDialog.kind === "image") {
+      const url = editorDialog.url.trim();
+      if (!url) return;
+      insertHtml(`<img src="${escapeHtml(url)}" alt="${escapeHtml(editorDialog.alt.trim())}" style="max-width:100%;height:auto;" />`);
+    } else if (editorDialog.kind === "media") {
+      const url = editorDialog.url.trim();
+      if (!url) return;
+      if (editorDialog.media === "video") insertHtml(`<video controls src="${escapeHtml(url)}" style="max-width:100%;height:auto;"></video>`);
+      else insertHtml(`<audio controls src="${escapeHtml(url)}" style="width:100%;"></audio>`);
+    }
+    setEditorDialog(null);
   };
 
   const insertTable = () => {
@@ -263,6 +471,20 @@ function HtmlNoteCard({
 
   const insertCode = () => insertHtml(`<pre><code>code...</code></pre>`);
   const insertQuote = () => insertHtml(`<blockquote>نقل‌قول…</blockquote>`);
+  const insertTaskList = () => {
+    const selected = savedSelectionText().trim();
+    if (selected) {
+      const items = selected
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => `<li><label><input type="checkbox"> ${escapeHtml(line)}</label></li>`)
+        .join("");
+      insertHtml(`<ul data-list-type="task">${items}</ul><p><br></p>`);
+      return;
+    }
+    insertHtml(`<ul data-list-type="task"><li><label><input type="checkbox"> کار جدید</label></li></ul><p><br></p>`);
+  };
 
   const selectAllEditor = () => {
     const el = editorRef.current;
@@ -272,22 +494,23 @@ function HtmlNoteCard({
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
+    savedRangeRef.current = range.cloneRange();
     el.focus();
   };
 
   const copySelected = () => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand("copy");
   };
 
   const cutSelected = () => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand("cut");
     scheduleCommit();
   };
 
   const pasteRich = async () => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     try {
       if (navigator.clipboard?.read) {
         const items = await navigator.clipboard.read();
@@ -307,7 +530,7 @@ function HtmlNoteCard({
   };
 
   const pastePlain = async () => {
-    editorRef.current?.focus();
+    restoreEditorSelection();
     try {
       const text = await navigator.clipboard.readText();
       if (text) document.execCommand("insertText", false, text);
@@ -317,12 +540,22 @@ function HtmlNoteCard({
     }
   };
 
-  const removeLink = () => exec("unlink");
+  const removeLink = () => {
+    const anchor = anchorFromSavedRange();
+    restoreEditorSelection();
+    if (anchor && editorRef.current?.contains(anchor)) {
+      anchor.replaceWith(...Array.from(anchor.childNodes));
+      scheduleCommit();
+      return;
+    }
+    exec("unlink");
+  };
 
   const openEditorContextMenu = (e: React.MouseEvent) => {
     if (!editing || sourceMode) return false;
     e.preventDefault();
     e.stopPropagation();
+    saveRangeFromPoint(e.clientX, e.clientY);
     const rows: MenuRow[] = [
       { icon: Link, label: "افزودن پیوند", onClick: insertLink },
       { icon: ExternalLink, label: "ویرایش/افزودن پیوند بیرونی", onClick: insertLink },
@@ -336,16 +569,16 @@ function HtmlNoteCard({
         rows: [
           { icon: List, label: "فهرست گلوله‌ای", onClick: () => exec("insertUnorderedList") },
           { icon: ListOrdered, label: "فهرست شماره‌دار", onClick: () => exec("insertOrderedList") },
-          { icon: ListChecks, label: "فهرست کارها", onClick: () => insertHtml(`<ul><li><input type=\"checkbox\"> کار جدید</li></ul>`) },
-          { icon: Heading1, label: "۱ سرفصل", onClick: () => exec("formatBlock", "h1") },
-          { icon: Heading2, label: "۲ سرفصل", onClick: () => exec("formatBlock", "h2") },
-          { icon: Heading3, label: "۳ سرفصل", onClick: () => exec("formatBlock", "h3") },
-          { icon: Heading4, label: "۴ سرفصل", onClick: () => exec("formatBlock", "h4") },
-          { icon: Heading5, label: "۵ سرفصل", onClick: () => exec("formatBlock", "h5") },
-          { icon: Heading6, label: "۶ سرفصل", onClick: () => exec("formatBlock", "h6") },
-          { icon: Pilcrow, label: "تنه", onClick: () => exec("formatBlock", "p") },
+          { icon: ListChecks, label: "فهرست کارها", onClick: insertTaskList },
+          ...blockOptions.map((option) => ({ icon: option.icon, label: option.label, onClick: () => formatBlock(option.value) })),
           { icon: Quote, label: "نقل‌قول", onClick: insertQuote },
         ],
+      },
+      {
+        type: "submenu",
+        icon: Type,
+        label: "اندازه متن",
+        rows: fontSizeOptions.map((option) => ({ icon: Type, label: `${option.label}px`, onClick: () => applyFontSize(option.value) })),
       },
       {
         type: "submenu",
@@ -367,7 +600,7 @@ function HtmlNoteCard({
       { icon: ClipboardCopy, label: "کپی", onClick: copySelected },
       { icon: ClipboardPaste, label: "جایگذاری", onClick: () => void pasteRich() },
       { icon: Clipboard, label: "جایگذاری به‌صورت متن ساده", onClick: () => void pastePlain() },
-      { icon: RemoveFormatting, label: "پاک کردن قالب‌بندی", onClick: () => exec("removeFormat") },
+      { icon: RemoveFormatting, label: "پاک کردن قالب‌بندی", onClick: clearFormatting },
       { icon: ClipboardCopy, label: "انتخاب همه", onClick: selectAllEditor },
     ];
     setEditorMenu({ x: Math.min(e.clientX, window.innerWidth - 248), y: Math.min(e.clientY, window.innerHeight - 430), rows });
@@ -532,6 +765,12 @@ function HtmlNoteCard({
       style={{ transform: `translate3d(${note.x}px, ${note.y}px, 0)`, width, height, ["--na" as any]: hex, pointerEvents: interactive ? "auto" : "none" }}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
+      onPointerDownCapture={(e) => {
+        if (editorMenu && !(e.target as HTMLElement).closest("[data-ui]")) setEditorMenu(null);
+      }}
+      onClickCapture={(e) => {
+        if (editorMenu && !(e.target as HTMLElement).closest("[data-ui]")) setEditorMenu(null);
+      }}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onRequestEdit(note.id);
@@ -604,14 +843,36 @@ function HtmlNoteCard({
             {toolbarButton("Quote", <Quote size={13} />, insertQuote)}
             {toolbarButton("Undo", <Undo2 size={13} />, () => exec("undo"))}
             {toolbarButton("Redo", <Redo2 size={13} />, () => exec("redo"))}
-            {toolbarButton("Clear", <RemoveFormatting size={13} />, () => exec("removeFormat"))}
-            <select className="html-note-select" title="Heading" onChange={(e) => e.target.value && exec("formatBlock", e.target.value)} defaultValue="">
+            {toolbarButton("Clear", <RemoveFormatting size={13} />, clearFormatting)}
+            <select
+              className="html-note-select"
+              title="Block"
+              defaultValue=""
+              onPointerDown={saveEditorSelection}
+              onChange={(e) => {
+                if (e.target.value) formatBlock(e.target.value);
+                e.currentTarget.value = "";
+              }}
+            >
               <option value="">Block</option>
-              <option value="p">P</option>
-              <option value="h1">H1</option>
-              <option value="h2">H2</option>
-              <option value="h3">H3</option>
-              <option value="pre">Pre</option>
+              {blockOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <select
+              className="html-note-select html-note-size-select"
+              title="اندازه متن"
+              defaultValue=""
+              onPointerDown={saveEditorSelection}
+              onChange={(e) => {
+                if (e.target.value) applyFontSize(e.target.value);
+                e.currentTarget.value = "";
+              }}
+            >
+              <option value="">سایز متن</option>
+              {fontSizeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}px</option>
+              ))}
             </select>
             <select className="html-note-select" title="Overflow" value={overflow} onChange={(e) => onChange(note.id, { overflow: e.target.value as NoteOverflow })}>
               <option value="auto">overflow auto</option>
@@ -619,8 +880,8 @@ function HtmlNoteCard({
               <option value="visible">visible</option>
               <option value="scroll">scroll</option>
             </select>
-            <input type="color" title="Text color" className="html-note-color" onChange={(e) => exec("foreColor", e.target.value)} />
-            <input type="color" title="Background" className="html-note-color" onChange={(e) => exec("hiliteColor", e.target.value)} />
+            <input type="color" title="Text color" className="html-note-color" onPointerDown={saveEditorSelection} onChange={(e) => applyInlineStyle({ color: e.target.value })} />
+            <input type="color" title="Background" className="html-note-color" onPointerDown={saveEditorSelection} onChange={(e) => applyInlineStyle({ backgroundColor: e.target.value })} />
             <button type="button" className="html-note-tool html-note-source-toggle" onMouseDown={(e) => e.preventDefault()} onClick={() => setSourceMode(true)}><FileCode2 size={13} /> HTML</button>
           </div>
         )}
@@ -647,6 +908,9 @@ function HtmlNoteCard({
               style={{ overflow }}
               dangerouslySetInnerHTML={!editing ? { __html: safeHtml } : undefined}
               onInput={scheduleCommit}
+              onMouseUp={saveEditorSelection}
+              onKeyUp={saveEditorSelection}
+              onFocus={saveEditorSelection}
               onBlur={() => commit()}
               onKeyDown={(e) => {
                 if (!(e.ctrlKey || e.metaKey)) return;
@@ -654,7 +918,7 @@ function HtmlNoteCard({
                 if (key === "b") { e.preventDefault(); exec("bold"); }
                 else if (key === "i") { e.preventDefault(); exec("italic"); }
                 else if (key === "u") { e.preventDefault(); exec("underline"); }
-                else if (key === "k") { e.preventDefault(); insertLink(); }
+                else if (key === "k") { e.preventDefault(); saveEditorSelection(); insertLink(); }
               }}
               onPaste={(e) => {
                 const html = e.clipboardData.getData("text/html");
@@ -715,6 +979,54 @@ function HtmlNoteCard({
             ))}
           </div>
         </>
+      )}
+      {editorDialog && createPortal(
+        <div
+          data-ui
+          className="html-note-dialog-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditorDialog(null);
+          }}
+        >
+          <form
+            className="html-note-dialog glass"
+            dir="rtl"
+            onSubmit={(e) => {
+              e.preventDefault();
+              applyEditorDialog();
+            }}
+          >
+            <div className="html-note-dialog-title">
+              {editorDialog.kind === "link" ? "افزودن / ویرایش پیوند" : editorDialog.kind === "image" ? "درج تصویر" : editorDialog.media === "video" ? "درج ویدئو" : "درج صوت"}
+            </div>
+            <label className="html-note-dialog-field">
+              <span>{editorDialog.kind === "link" ? "آدرس پیوند یا #note-id" : "آدرس"}</span>
+              <input
+                autoFocus
+                value={editorDialog.url}
+                placeholder={editorDialog.kind === "link" ? "https://example.com یا #note-id" : "https://..."}
+                onChange={(e) => updateEditorDialog({ url: e.target.value })}
+              />
+            </label>
+            {editorDialog.kind === "link" && (
+              <label className="html-note-dialog-field">
+                <span>متن نمایشی</span>
+                <input value={editorDialog.text} placeholder="اگر خالی بماند متن انتخاب‌شده حفظ می‌شود" onChange={(e) => updateEditorDialog({ text: e.target.value })} />
+              </label>
+            )}
+            {editorDialog.kind === "image" && (
+              <label className="html-note-dialog-field">
+                <span>متن جایگزین</span>
+                <input value={editorDialog.alt} placeholder="توضیح تصویر" onChange={(e) => updateEditorDialog({ alt: e.target.value })} />
+              </label>
+            )}
+            <div className="html-note-dialog-actions">
+              <button type="button" className="html-note-action" onClick={() => setEditorDialog(null)}>لغو</button>
+              <button type="submit" className="html-note-action html-note-action-primary">اعمال</button>
+            </div>
+          </form>
+        </div>,
+        document.body
       )}
       {editorMenu && createPortal(<ContextMenu menu={editorMenu} onClose={() => setEditorMenu(null)} />, document.body)}
     </div>
