@@ -120,6 +120,17 @@ body {
     0 0 0 2px color-mix(in srgb, var(--na) 55%, transparent),
     0 22px 55px -18px color-mix(in srgb, var(--na) 40%, rgba(0, 0, 0, 0.55));
 }
+.note-editing .note-inner {
+  border-color: color-mix(in srgb, var(--na) 85%, white 8%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--na) 62%, transparent),
+    0 0 0 8px color-mix(in srgb, var(--na) 16%, transparent),
+    0 24px 62px -20px color-mix(in srgb, var(--na) 45%, rgba(0, 0, 0, 0.58));
+}
+.note-editing .note-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 .note-title-input,
 .note-body-input {
@@ -135,6 +146,23 @@ body {
 .note-body-input::placeholder {
   color: var(--text-dim);
   opacity: 0.6;
+  direction: rtl;
+  text-align: right;
+}
+.note-title-input:placeholder-shown,
+.note-body-input:placeholder-shown {
+  direction: rtl;
+  text-align: right;
+}
+[data-note]:not([data-editing="true"]) .note-title-input,
+[data-note]:not([data-editing="true"]) .note-body-input {
+  cursor: grab !important;
+  caret-color: transparent;
+  user-select: none;
+}
+[data-note]:not([data-editing="true"]):active .note-title-input,
+[data-note]:not([data-editing="true"]):active .note-body-input {
+  cursor: grabbing !important;
 }
 
 .note-actions {
@@ -152,6 +180,87 @@ body {
     opacity: 1;
     transform: none;
   }
+}
+
+.connection-label-shell {
+  position: relative;
+}
+.connection-label,
+.connection-label-input {
+  box-sizing: border-box;
+  min-width: 14px;
+  max-width: 240px;
+  min-height: 26px;
+  padding: 5px 2px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-solid);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.connection-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: text;
+}
+.connection-label-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
+}
+.connection-label-input {
+  display: block;
+  padding-inline: 2px;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  outline: none;
+  caret-color: currentColor;
+  appearance: none;
+}
+.connection-label-shell-selected .connection-label,
+.connection-label-input:focus {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, currentColor 36%, transparent),
+    0 14px 34px -18px rgba(0, 0, 0, 0.75);
+}
+.connection-label-delete {
+  position: absolute;
+  top: -9px;
+  inset-inline-end: -9px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #fff;
+  background: #ef4444;
+  box-shadow: 0 10px 18px -10px rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+}
+.connection-label-delete:hover {
+  background: #dc2626;
 }
 
 .icon-btn {
@@ -284,4 +393,379 @@ body {
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+.note-group {
+  border: 1.5px solid color-mix(in oklab, var(--group-color) 40%, rgba(148, 163, 184, 0.42));
+  background: color-mix(in oklab, var(--group-color) 10%, rgba(148, 163, 184, 0.13));
+  border-radius: 26px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 18px 55px rgba(15,23,42,.08);
+  cursor: grab;
+  user-select: none;
+}
+
+.note-group:active {
+  cursor: grabbing;
+}
+
+.note-group-selected {
+  border-color: color-mix(in oklab, var(--group-color) 75%, white 18%);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--group-color) 32%, transparent), 0 22px 70px rgba(15,23,42,.12);
+}
+
+.note-group-title {
+  position: absolute;
+  top: -13px;
+  right: 22px;
+  max-width: calc(100% - 44px);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  background: color-mix(in oklab, var(--surface-solid) 88%, var(--group-color) 12%);
+  border: 1px solid color-mix(in oklab, var(--group-color) 42%, var(--border));
+  box-shadow: 0 10px 28px rgba(15,23,42,.10);
+}
+
+.note-group-title-input {
+  max-width: 100%;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+}
+
+.group-resize-handle {
+  pointer-events: auto;
+  background: transparent;
+}
+
+.rich-note-content {
+  direction: auto;
+  unicode-bidi: plaintext;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.rich-note-content p,
+.rich-note-content div,
+.rich-note-content blockquote,
+.rich-note-content pre,
+.rich-note-content h1,
+.rich-note-content h2,
+.rich-note-content h3,
+.rich-note-content h4,
+.rich-note-content h5,
+.rich-note-content h6 {
+  margin: 0 0 0.55em;
+}
+.rich-note-content ul,
+.rich-note-content ol {
+  margin: 0.35em 0 0.65em;
+  padding-inline-start: 0;
+  padding-inline-end: 0;
+  list-style-position: inside;
+}
+.rich-note-content ul {
+  list-style-type: disc;
+}
+.rich-note-content ol {
+  list-style-type: decimal;
+}
+.rich-note-content li {
+  display: list-item;
+  margin: 0.18em 0;
+}
+.rich-note-content blockquote {
+  border-inline-start: 3px solid color-mix(in srgb, var(--na) 55%, var(--border));
+  padding-inline-start: 0.8em;
+  color: color-mix(in srgb, var(--text) 86%, var(--text-dim));
+}
+.rich-note-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.35em 0;
+}
+.rich-note-content td,
+.rich-note-content th {
+  border: 1px solid var(--border);
+  padding: 0.25em 0.45em;
+  vertical-align: top;
+}
+.rich-note-content a {
+  color: color-mix(in srgb, var(--na) 70%, #38bdf8);
+  text-decoration: underline;
+}
+.rich-note-editor {
+  outline: none;
+  caret-color: var(--na);
+  border-radius: 10px;
+}
+.rich-note-editor:empty::before {
+  content: attr(data-placeholder);
+  display: block;
+  color: var(--text-dim);
+  opacity: 0.6;
+  direction: rtl;
+  text-align: right;
+  pointer-events: none;
+}
+
+.html-note-inner {
+  border: 1px solid color-mix(in srgb, var(--na) 36%, var(--border));
+}
+.html-note-header {
+  background: color-mix(in srgb, var(--na) 8%, transparent);
+}
+.html-note-toolbar {
+  max-height: 92px;
+  overflow-y: auto;
+}
+.html-note-tool,
+.html-note-select,
+.html-note-color,
+.html-note-action {
+  min-height: 24px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+.html-note-tool {
+  min-width: 25px;
+  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.html-note-tool:hover,
+.html-note-action:hover {
+  background: color-mix(in srgb, var(--na) 16%, var(--surface-2));
+}
+.html-note-select {
+  padding: 3px 6px;
+  max-width: 126px;
+  color-scheme: dark;
+}
+html.light .html-note-select {
+  color-scheme: light;
+}
+.html-note-select option {
+  background: var(--surface-solid);
+  color: var(--text);
+}
+.html-note-size-select {
+  max-width: 96px;
+}
+.html-note-color {
+  width: 26px;
+  padding: 1px;
+}
+.html-note-source-toggle {
+  color: color-mix(in srgb, var(--na) 78%, var(--text));
+}
+.html-document-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 72px;
+  outline: none;
+  border-radius: 12px;
+  padding: 2px 2px 8px;
+  caret-color: var(--na);
+}
+.html-document-editor[contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+}
+.html-source-area {
+  width: 100%;
+  min-height: 70px;
+  resize: none;
+  outline: none;
+  border-radius: 14px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-solid) 88%, #000 4%);
+  color: var(--text);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.html-note-action {
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.html-note-action-primary {
+  background: color-mix(in srgb, var(--na) 52%, #0ea5e9);
+  color: white;
+}
+.html-note-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.26);
+}
+.html-note-dialog {
+  width: min(420px, calc(100vw - 28px));
+  border-radius: 20px;
+  padding: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+.html-note-dialog-title {
+  font-size: 14px;
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+.html-note-dialog-field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim);
+}
+.html-note-dialog-field input {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-solid) 88%, #000 4%);
+  color: var(--text);
+  padding: 9px 10px;
+  outline: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+.html-note-dialog-field input:focus {
+  border-color: color-mix(in srgb, var(--na) 64%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--na) 18%, transparent);
+}
+.html-note-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+.rich-note-content {
+  direction: auto;
+  unicode-bidi: plaintext;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.rich-note-content p,
+.rich-note-content div,
+.rich-note-content blockquote,
+.rich-note-content pre,
+.rich-note-content h1,
+.rich-note-content h2,
+.rich-note-content h3,
+.rich-note-content h4,
+.rich-note-content h5,
+.rich-note-content h6 {
+  margin: 0 0 0.55em;
+}
+.rich-note-content h1 { font-size: 1.7em; font-weight: 900; }
+.rich-note-content h2 { font-size: 1.45em; font-weight: 900; }
+.rich-note-content h3 { font-size: 1.25em; font-weight: 850; }
+.rich-note-content ul,
+.rich-note-content ol {
+  margin: 0.35em 0 0.65em;
+  padding-inline-start: 0;
+  padding-inline-end: 0;
+  list-style-position: inside;
+}
+.rich-note-content ul { list-style-type: disc; }
+.rich-note-content ol { list-style-type: decimal; }
+.rich-note-content ul[data-list-type="task"] {
+  list-style: none;
+  padding-inline-start: 0;
+}
+.rich-note-content li {
+  display: list-item;
+  margin: 0.18em 0;
+}
+.rich-note-content blockquote {
+  border-inline-start: 3px solid color-mix(in srgb, var(--na) 55%, var(--border));
+  padding-inline-start: 0.8em;
+  color: color-mix(in srgb, var(--text) 86%, var(--text-dim));
+}
+.rich-note-content pre,
+.rich-note-content code,
+.rich-note-content kbd,
+.rich-note-content samp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+.rich-note-content pre {
+  background: color-mix(in srgb, var(--surface-2) 82%, #000 7%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  overflow: auto;
+}
+.rich-note-content table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.35em 0;
+  display: table;
+  overflow-x: auto;
+}
+.rich-note-content td,
+.rich-note-content th {
+  border: 1px solid var(--border);
+  padding: 0.25em 0.45em;
+  vertical-align: top;
+  min-width: 44px;
+}
+.rich-note-content img,
+.rich-note-content video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.rich-note-content audio {
+  width: 100%;
+}
+.rich-note-content a {
+  color: color-mix(in srgb, var(--na) 70%, #38bdf8);
+  text-decoration: underline;
+}
+.rich-note-content details {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin: 0.4em 0;
+}
+.rich-note-content summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+.rich-note-content input,
+.rich-note-content textarea,
+.rich-note-content select,
+.rich-note-content button {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 6px;
+  background: var(--surface-2);
+  color: var(--text);
 }

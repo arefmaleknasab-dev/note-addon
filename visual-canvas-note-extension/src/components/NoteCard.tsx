@@ -1,8 +1,17 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, Copy, ExternalLink, GripVertical, Palette, Trash2 } from "lucide-react";
-import type { Note } from "../types";
+import { Check, Copy, GripVertical, Palette, Trash2 } from "lucide-react";
+import type { ConnectionSide, Note } from "../types";
 import { colorHex, PALETTE } from "../lib/constants";
-import { relativeTime, truncate } from "../lib/notes";
+import {
+  DEFAULT_NOTE_H,
+  DEFAULT_NOTE_W,
+  MAX_NOTE_H,
+  MAX_NOTE_W,
+  MIN_NOTE_H,
+  MIN_NOTE_W,
+  relativeTime,
+} from "../lib/notes";
+import { htmlToPlainText, plainTextToHtml, sanitizeHtml } from "../lib/richText";
 
 interface Props {
   note: Note;
@@ -10,14 +19,38 @@ interface Props {
   zoom: number;
   autoFocusId: string | null;
   recentId: string | null;
+  editing: boolean;
   onChange: (id: string, patch: Partial<Note>) => void;
   onDelete: (id: string) => void;
+  onRequestEdit: (id: string) => void;
   onCopy: (id: string) => void;
   onDragStart: (e: React.PointerEvent, id: string) => void;
+  onConnectorDragStart: (e: React.PointerEvent, id: string, side: ConnectionSide) => void;
+  onEditorContextMenu: (
+    e: React.MouseEvent<HTMLInputElement | HTMLTextAreaElement>,
+    id: string,
+    field: "title" | "text"
+  ) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
   interactive: boolean;
 }
+
+type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+const connectorClass =
+  "absolute z-30 w-4 h-4 rounded-full border-2 border-white/80 opacity-0 scale-75 transition-all cursor-crosshair group-hover/edge:opacity-100 group-hover/edge:scale-100";
+
+const resizeHandles: { id: ResizeHandle; className: string; cursor: string }[] = [
+  { id: "n", className: "top-0 left-5 right-5 h-2 -translate-y-1/2", cursor: "ns-resize" },
+  { id: "s", className: "bottom-0 left-5 right-5 h-2 translate-y-1/2", cursor: "ns-resize" },
+  { id: "e", className: "right-0 top-5 bottom-5 w-2 translate-x-1/2", cursor: "ew-resize" },
+  { id: "w", className: "left-0 top-5 bottom-5 w-2 -translate-x-1/2", cursor: "ew-resize" },
+  { id: "ne", className: "right-0 top-0 w-5 h-5 translate-x-1/2 -translate-y-1/2", cursor: "nesw-resize" },
+  { id: "nw", className: "left-0 top-0 w-5 h-5 -translate-x-1/2 -translate-y-1/2", cursor: "nwse-resize" },
+  { id: "se", className: "right-0 bottom-0 w-5 h-5 translate-x-1/2 translate-y-1/2", cursor: "nwse-resize" },
+  { id: "sw", className: "left-0 bottom-0 w-5 h-5 -translate-x-1/2 translate-y-1/2", cursor: "nesw-resize" },
+];
 
 function NoteCard({
   note,
@@ -25,10 +58,14 @@ function NoteCard({
   zoom,
   autoFocusId,
   recentId,
+  editing,
   onChange,
   onDelete,
   onCopy,
   onDragStart,
+  onRequestEdit,
+  onConnectorDragStart,
+  onEditorContextMenu,
   onContextMenu,
   registerRef,
   interactive,
@@ -38,18 +75,15 @@ function NoteCard({
   const [pickerOpen, setPickerOpen] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const richBodyRef = useRef<HTMLDivElement>(null);
+  const richEditInitRef = useRef<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const hex = colorHex(note.color);
-
-  const autoGrow = (el: HTMLTextAreaElement | null) => {
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
-  };
-
-  useEffect(() => {
-    autoGrow(bodyRef.current);
-  }, [note.text, note.width]);
+  const width = note.width ?? DEFAULT_NOTE_W;
+  const height = note.height ?? DEFAULT_NOTE_H;
+  const safeHtml = sanitizeHtml(note.html);
+  const hasRichBody = Boolean(safeHtml);
+  const bodyHtml = safeHtml ?? plainTextToHtml(note.text);
 
   useEffect(() => {
     if (autoFocusId === note.id) {
@@ -58,32 +92,96 @@ function NoteCard({
     }
   }, [autoFocusId, note.id]);
 
-  /* ---- width resize from the LEFT edge (right edge stays anchored) ---- */
-  const startResize = (e: React.PointerEvent) => {
+  useEffect(() => {
+    if (!editing) {
+      richEditInitRef.current = null;
+      return;
+    }
+    if (!richBodyRef.current || richEditInitRef.current === note.id) return;
+    richBodyRef.current.innerHTML = bodyHtml;
+    richEditInitRef.current = note.id;
+  }, [bodyHtml, editing, note.id]);
+
+  const commitRichBody = (el: HTMLDivElement) => {
+    const html = sanitizeHtml(el.innerHTML);
+    const text = html ? htmlToPlainText(html) : el.innerText || "";
+    onChange(note.id, { text, html });
+  };
+
+  const startResize = (e: React.PointerEvent, handle: ResizeHandle) => {
     e.stopPropagation();
     e.preventDefault();
-    const startW = note.width;
-    const startNoteX = note.x;
-    const startX = e.clientX;
+    const startW = width;
+    const startH = height;
+    const startX = note.x;
+    const startY = note.y;
+    const sx = e.clientX;
+    const sy = e.clientY;
     const el = wrapRef.current;
-    let w = startW;
-    let nx = startNoteX;
+    let next = { x: startX, y: startY, width: startW, height: startH };
+
     const move = (ev: PointerEvent) => {
-      // RTL: کشیدن دستگیره به چپ → بزرگ‌تر، به راست → کوچک‌تر
-      const deltaW = (startX - ev.clientX) / zoom;
-      w = Math.min(520, Math.max(230, startW + deltaW));
-      nx = startNoteX - (w - startW); // لبه‌ی راست ثابت می‌ماند
-      if (el) {
-        el.style.width = w + "px";
-        el.style.transform = `translate3d(${nx}px, ${note.y}px, 0)`;
+      const dx = (ev.clientX - sx) / zoom;
+      const dy = (ev.clientY - sy) / zoom;
+      let x = startX;
+      let y = startY;
+      let w = startW;
+      let h = startH;
+
+      if (handle.includes("e")) w = startW + dx;
+      if (handle.includes("w")) {
+        w = startW - dx;
+        x = startX + dx;
       }
-      autoGrow(bodyRef.current);
+      if (handle.includes("s")) h = startH + dy;
+      if (handle.includes("n")) {
+        h = startH - dy;
+        y = startY + dy;
+      }
+
+      if (w < MIN_NOTE_W) {
+        if (handle.includes("w")) x -= MIN_NOTE_W - w;
+        w = MIN_NOTE_W;
+      }
+      if (w > MAX_NOTE_W) {
+        if (handle.includes("w")) x -= MAX_NOTE_W - w;
+        w = MAX_NOTE_W;
+      }
+      if (h < MIN_NOTE_H) {
+        if (handle.includes("n")) y -= MIN_NOTE_H - h;
+        h = MIN_NOTE_H;
+      }
+      if (h > MAX_NOTE_H) {
+        if (handle.includes("n")) y -= MAX_NOTE_H - h;
+        h = MAX_NOTE_H;
+      }
+
+      next = { x, y, width: w, height: h };
+      const patch = {
+        x: Math.round(x),
+        y: Math.round(y),
+        width: Math.round(w),
+        height: Math.round(h),
+      };
+      onChange(note.id, patch);
+      if (el) {
+        el.style.width = `${w}px`;
+        el.style.height = `${h}px`;
+        el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      }
     };
+
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      onChange(note.id, { width: Math.round(w), x: Math.round(nx) });
+      onChange(note.id, {
+        x: Math.round(next.x),
+        y: Math.round(next.y),
+        width: Math.round(next.width),
+        height: Math.round(next.height),
+      });
     };
+
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
@@ -95,6 +193,41 @@ function NoteCard({
     window.setTimeout(() => setCopied(false), 1400);
   };
 
+  const openNoteMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onContextMenu(e, note.id);
+  };
+
+  const connectorDot = (side: ConnectionSide, className: string) => (
+    <button
+      data-connector
+      data-nodrag
+      title="کشیدن برای اتصال یادداشت‌ها"
+      className={`${connectorClass} ${className}`}
+      style={{ background: hex, boxShadow: `0 0 0 5px ${hex}26` }}
+      onPointerDown={(e) => onConnectorDragStart(e, note.id, side)}
+    />
+  );
+
+  const edgeZone = (
+    side: ConnectionSide,
+    handle: ResizeHandle,
+    className: string,
+    dotClassName: string,
+    cursor: string
+  ) => (
+    <div
+      data-resize
+      data-nodrag
+      className={`absolute z-30 group/edge ${className}`}
+      style={{ cursor }}
+      onPointerDown={(e) => startResize(e, handle)}
+    >
+      {connectorDot(side, dotClassName)}
+    </div>
+  );
+
   return (
     <div
       ref={(el) => {
@@ -102,35 +235,55 @@ function NoteCard({
         registerRef(note.id, el);
       }}
       data-note={note.id}
+      data-editing={editing ? "true" : undefined}
       className={[
         "absolute top-0 left-0 group",
+        editing ? "note-editing" : "cursor-grab active:cursor-grabbing",
         selected ? "note-selected z-20" : "z-10",
         hover ? "note-hovered" : "",
       ].join(" ")}
       style={{
         transform: `translate3d(${note.x}px, ${note.y}px, 0)`,
-        width: note.width,
+        width,
+        height,
         ["--na" as any]: hex,
         pointerEvents: interactive ? "auto" : "none",
       }}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
-      onContextMenu={(e) => {
-        if ((e.target as HTMLElement).closest("input, textarea")) return; // native edit menu
-        e.preventDefault();
+      onDoubleClick={(e) => {
         e.stopPropagation();
-        onContextMenu(e, note.id);
+        onRequestEdit(note.id);
+      }}
+      onPointerDown={(e) => {
+        if (editing) return;
+        if ((e.target as HTMLElement).closest("[data-nodrag], button, a")) return;
+        onDragStart(e, note.id);
+      }}
+      onWheel={(e) => {
+        if (!editing) return;
+        e.stopPropagation();
+        const target = e.target as HTMLElement;
+        if (!target.closest("textarea, [contenteditable='true']")) {
+          e.preventDefault();
+          if (bodyRef.current) bodyRef.current.scrollTop += e.deltaY;
+          if (richBodyRef.current) richBodyRef.current.scrollTop += e.deltaY;
+        }
+      }}
+      onContextMenu={(e) => {
+        if (editing && (e.target as HTMLElement).closest("input, textarea")) return;
+        openNoteMenu(e);
       }}
     >
       <div
         className={[
-          "note-inner relative rounded-2xl overflow-hidden",
+          "note-inner relative rounded-2xl overflow-hidden h-full flex flex-col",
           recentId === note.id ? "pulse-ring" : "",
         ].join(" ")}
       >
         {/* header — drag handle */}
         <div
-          className="flex items-center gap-1 ps-3 pe-2 pt-2.5 pb-1 cursor-grab active:cursor-grabbing touch-none"
+          className="flex items-center gap-1 ps-3 pe-2 pt-2.5 pb-1 cursor-grab active:cursor-grabbing touch-none shrink-0"
           onPointerDown={(e) => {
             if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
             onDragStart(e, note.id);
@@ -139,13 +292,20 @@ function NoteCard({
           <GripVertical size={14} className="shrink-0 opacity-40" style={{ color: hex }} />
           <input
             ref={titleRef}
-            data-nodrag
-            dir="auto"
+            data-editor
+            data-nodrag={editing ? "true" : undefined}
+            dir={note.title.trim() ? "auto" : "rtl"}
             value={note.title}
             placeholder="عنوان یادداشت…"
-            className="note-title-input text-[14.5px] font-bold leading-6 px-1"
+            style={{ textAlign: note.title.trim() ? undefined : "right" }}
+            readOnly={!editing}
+            tabIndex={editing ? 0 : -1}
+            className={`note-title-input text-[14.5px] font-bold leading-6 px-1 ${editing ? "cursor-text" : "cursor-grab select-none"}`}
             onChange={(e) => onChange(note.id, { title: e.target.value })}
-            onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "title") : openNoteMenu(e))}
+            onPointerDown={(e) => {
+              if (editing) e.stopPropagation();
+            }}
             spellCheck={false}
           />
 
@@ -185,54 +345,121 @@ function NoteCard({
         </div>
 
         {/* body */}
-        <div className="px-4 pb-2">
-          <textarea
-            ref={bodyRef}
-            dir="auto"
-            value={note.text}
-            placeholder="متن خود را بنویسید…"
-            className="note-body-input text-[13px] leading-6 min-h-[46px]"
-            rows={2}
-            onChange={(e) => {
-              onChange(note.id, { text: e.target.value });
-              autoGrow(e.target);
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            spellCheck={false}
-          />
+        <div className="px-4 pb-2 flex-1 min-h-0">
+          {hasRichBody ? (
+            editing ? (
+              <div
+                ref={richBodyRef}
+                data-editor
+                data-nodrag="true"
+                contentEditable
+                suppressContentEditableWarning
+                dir="auto"
+                tabIndex={0}
+                className="note-body-input rich-note-content rich-note-editor text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto cursor-text"
+                data-placeholder="متن خود را بنویسید…"
+                onInput={(e) => commitRichBody(e.currentTarget)}
+                onPaste={(e) => {
+                  const html = e.clipboardData.getData("text/html");
+                  if (!html) return;
+                  e.preventDefault();
+                  const safe = sanitizeHtml(html);
+                  if (safe) document.execCommand("insertHTML", false, safe);
+                  else document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+                  commitRichBody(e.currentTarget);
+                }}
+                onContextMenu={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                spellCheck={false}
+              />
+            ) : (
+              <div
+                className="note-body-input rich-note-content text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto cursor-grab select-none"
+                dir="auto"
+                dangerouslySetInnerHTML={{ __html: bodyHtml }}
+              />
+            )
+          ) : (
+            <textarea
+              ref={bodyRef}
+              data-editor
+              data-nodrag={editing ? "true" : undefined}
+              dir={note.text.trim() ? "auto" : "rtl"}
+              value={note.text}
+              placeholder="متن خود را بنویسید…"
+              style={{ textAlign: note.text.trim() ? undefined : "right" }}
+              readOnly={!editing}
+              tabIndex={editing ? 0 : -1}
+              className={`note-body-input text-[13px] leading-6 h-full min-h-[46px] overflow-y-auto ${editing ? "cursor-text" : "cursor-grab select-none"}`}
+              rows={2}
+              onChange={(e) => onChange(note.id, { text: e.target.value })}
+              onPaste={(e) => {
+                const html = e.clipboardData.getData("text/html");
+                if (!html) return;
+                const safe = sanitizeHtml(html);
+                if (!safe) return;
+                e.preventDefault();
+                onChange(note.id, { text: htmlToPlainText(safe), html: safe });
+              }}
+              onContextMenu={(e) => (editing ? onEditorContextMenu(e, note.id, "text") : openNoteMenu(e))}
+              onPointerDown={(e) => {
+                if (editing) e.stopPropagation();
+              }}
+              spellCheck={false}
+            />
+          )}
         </div>
 
         {/* footer */}
-        <div className="flex items-center gap-2 px-4 pb-2.5 -mt-0.5">
-          {note.source?.url && (
-            <a
-              href={note.source.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1 text-[10.5px] hover:underline underline-offset-2"
-              style={{ color: hex }}
-              onPointerDown={(e) => e.stopPropagation()}
-              title={note.source.title}
-            >
-              <ExternalLink size={10} />
-              {truncate(note.source.title || "منبع", 26)}
-            </a>
-          )}
+        <div className="flex items-center gap-2 px-4 pb-2.5 -mt-0.5 shrink-0">
           <span className="text-[10.5px] tabular ms-auto" style={{ color: "var(--text-dim)" }}>
             {relativeTime(note.createdAt)}
           </span>
         </div>
+      </div>
 
-        {/* resize grip (bottom-left in RTL grows width) */}
-        <div
-          className="absolute bottom-0 left-0 w-5 h-5 cursor-nesw-resize opacity-0 group-hover:opacity-100 transition-opacity"
-          onPointerDown={startResize}
-          title="تغییر اندازه"
-        >
-          <svg viewBox="0 0 10 10" className="absolute bottom-1.5 left-1.5 w-2.5 h-2.5 opacity-60">
-            <path d="M9 1 L1 9 M9 5 L5 9" stroke={hex} strokeWidth="1.4" strokeLinecap="round" fill="none" />
-          </svg>
-        </div>
+      {/* side lines: resize on drag, show connection dot only while hovering that side */}
+      {edgeZone(
+        "top",
+        "n",
+        "top-0 left-5 right-5 -translate-y-1/2 h-[18px]",
+        "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+        "ns-resize"
+      )}
+      {edgeZone(
+        "right",
+        "e",
+        "right-0 top-5 bottom-5 translate-x-1/2 w-[18px]",
+        "right-1/2 top-1/2 translate-x-1/2 -translate-y-1/2",
+        "ew-resize"
+      )}
+      {edgeZone(
+        "bottom",
+        "s",
+        "bottom-0 left-5 right-5 translate-y-1/2 h-[18px]",
+        "bottom-1/2 left-1/2 -translate-x-1/2 translate-y-1/2",
+        "ns-resize"
+      )}
+      {edgeZone(
+        "left",
+        "w",
+        "left-0 top-5 bottom-5 -translate-x-1/2 w-[18px]",
+        "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+        "ew-resize"
+      )}
+
+      {/* corner resize grips */}
+      <div data-nodrag className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+        {resizeHandles.filter((h) => h.id.length === 2).map((h) => (
+          <button
+            key={h.id}
+            data-resize
+            title="تغییر اندازه"
+            className={`absolute pointer-events-auto rounded-lg ${h.className}`}
+            style={{ cursor: h.cursor }}
+            onPointerDown={(e) => startResize(e, h.id)}
+          />
+        ))}
       </div>
 
       {/* color picker popover (outside the clipped card) */}
@@ -284,6 +511,7 @@ export default memo(NoteCard, (prev, next) => {
     prev.zoom === next.zoom &&
     prev.autoFocusId === next.autoFocusId &&
     prev.recentId === next.recentId &&
+    prev.editing === next.editing &&
     prev.interactive === next.interactive
   );
 });

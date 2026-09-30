@@ -1,29 +1,47 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeftRight,
+  ArrowRight,
+  Clipboard,
   ClipboardCopy,
+  ClipboardPaste,
   Copy,
   CopyPlus,
   Download,
+  ExternalLink,
+  FilePlus,
+  FolderPlus,
   Hand,
-  HelpCircle,
-  LayoutGrid,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
+  Link,
+  List,
+  ListChecks,
+  ListOrdered,
   LoaderCircle,
   Maximize,
-  Moon,
+  Minus,
   MousePointer2,
+  Pilcrow,
   Plus,
-  RotateCcw,
-  Sun,
+  Quote,
+  Scissors,
+  TextCursorInput,
   Trash2,
+  Upload,
 } from "lucide-react";
 import NoteCard from "./components/NoteCard";
+import HtmlNoteCard from "./components/HtmlNoteCard";
 import ContextMenu, { type MenuRow } from "./components/ContextMenu";
 import Toolbar from "./components/Toolbar";
-import HelpModal from "./components/HelpModal";
 import EmptyState from "./components/EmptyState";
 import { ToastStack, useToasts } from "./components/Toasts";
-import type { Note, Theme, ViewState } from "./types";
+import type { ConnectionDirection, ConnectionSide, Note, NoteConnection, NoteGroup, Theme, ViewState } from "./types";
 import {
   clearPendingNotes,
   getPendingNotes,
@@ -37,14 +55,32 @@ import {
 import { copyCombined, copySeparately, copySingle } from "./lib/clipboard";
 import {
   createNote,
+  DEFAULT_NOTE_H,
   DEFAULT_NOTE_W,
+  MAX_NOTE_H,
+  MAX_NOTE_W,
+  MIN_NOTE_H,
+  MIN_NOTE_W,
   noteFromPending,
   seedNotes,
   viewCenter,
 } from "./lib/notes";
-import { faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
+import { colorHex, faNum, GRID_SIZE, MAX_ZOOM, MIN_ZOOM, uid } from "./lib/constants";
+import { htmlToPlainText, sanitizeCss, sanitizeHtml } from "./lib/richText";
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const CONNECTION_COLOR = "#8b95a7";
+const CONNECTION_COLORS = [
+  { name: "خاکستری", hex: "#8b95a7" },
+  { name: "کهربایی", hex: "#f5a623" },
+  { name: "صورتی", hex: "#fb7185" },
+  { name: "آبی", hex: "#38bdf8" },
+  { name: "سبز", hex: "#34d399" },
+  { name: "بنفش", hex: "#a78bfa" },
+];
+
+const connectionColor = (connection: NoteConnection) => connection.color || CONNECTION_COLOR;
+const connectionDirection = (connection: NoteConnection): ConnectionDirection => connection.direction ?? "forward";
 
 type Gesture =
   | { type: "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean }
@@ -57,17 +93,290 @@ type Gesture =
       ids: string[];
       origins: Record<string, { x: number; y: number }>;
     }
+  | {
+      type: "group";
+      sx: number;
+      sy: number;
+      moved: boolean;
+      groupId: string;
+      ids: string[];
+      origins: Record<string, { x: number; y: number }>;
+      groupOrigin: { x: number; y: number };
+    }
   | null;
+
+type Point = { x: number; y: number };
+type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+type Endpoint = { noteId: string; side: ConnectionSide };
+type DraftConnection = { from: Endpoint; to: Point; target?: Endpoint | null };
+type ConnectionPrompt = { x: number; y: number; from: Endpoint; to: Point };
+
+const sideVector = (side: ConnectionSide): Point => {
+  switch (side) {
+    case "top":
+      return { x: 0, y: -1 };
+    case "right":
+      return { x: 1, y: 0 };
+    case "bottom":
+      return { x: 0, y: 1 };
+    case "left":
+      return { x: -1, y: 0 };
+  }
+};
+
+const oppositeSide = (side: ConnectionSide): ConnectionSide => {
+  switch (side) {
+    case "top":
+      return "bottom";
+    case "bottom":
+      return "top";
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+  }
+};
+
+const noteSize = (n: Note) => ({ width: n.width ?? DEFAULT_NOTE_W, height: n.height ?? DEFAULT_NOTE_H });
+
+const sidePoint = (n: Note, side: ConnectionSide): Point => {
+  const { width, height } = noteSize(n);
+  switch (side) {
+    case "top":
+      return { x: n.x + width / 2, y: n.y };
+    case "right":
+      return { x: n.x + width, y: n.y + height / 2 };
+    case "bottom":
+      return { x: n.x + width / 2, y: n.y + height };
+    case "left":
+      return { x: n.x, y: n.y + height / 2 };
+  }
+};
+
+const CONNECTION_ENDPOINT_GAP = 2.25;
+
+const outsetPoint = (point: Point, side: ConnectionSide, gap = CONNECTION_ENDPOINT_GAP): Point => {
+  const v = sideVector(side);
+  return { x: point.x + v.x * gap, y: point.y + v.y * gap };
+};
+
+const connectionPath = (from: Point, fromSide: ConnectionSide, to: Point, toSide: ConnectionSide) => {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const curve = Math.max(70, Math.min(220, Math.hypot(dx, dy) * 0.42));
+  const fv = sideVector(fromSide);
+  const tv = sideVector(toSide);
+  const c1 = { x: from.x + fv.x * curve, y: from.y + fv.y * curve };
+  const c2 = { x: to.x + tv.x * curve, y: to.y + tv.y * curve };
+  return `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`;
+};
+
+const estimateNoteSize = (text: string) => {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const longest = Math.max(0, ...lines.map((line) => line.length));
+  const width = clamp(Math.max(DEFAULT_NOTE_W, longest * 7.2 + 76), MIN_NOTE_W, MAX_NOTE_W);
+  const charsPerLine = Math.max(22, Math.floor((width - 48) / 7.2));
+  const visualLines = lines.reduce(
+    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, line.length) / charsPerLine)),
+    0
+  );
+  const height = clamp(visualLines * 25 + 84, MIN_NOTE_H, MAX_NOTE_H);
+  return { width: Math.round(width), height: Math.round(height) };
+};
+
+const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+const CONNECTION_LABEL_FONT = '800 11.5px "Vazirmatn", "Segoe UI", Tahoma, system-ui, sans-serif';
+let connectionLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+const measureConnectionLabelLine = (line: string) => {
+  if (typeof document === "undefined") return Array.from(line).length * 7.2;
+  if (connectionLabelMeasureCtx === undefined) {
+    connectionLabelMeasureCtx = document.createElement("canvas").getContext("2d");
+  }
+  if (!connectionLabelMeasureCtx) return Array.from(line).length * 7.2;
+  connectionLabelMeasureCtx.font = CONNECTION_LABEL_FONT;
+  return connectionLabelMeasureCtx.measureText(line || " ").width;
+};
+
+const connectionLabelBoxSize = (value: string) => {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  const horizontalInset = 7; // 2px padding on each side + 1.5px borders, with no extra visual slack.
+  const maxWidth = 240;
+  const widest = Math.max(0, ...lines.map(measureConnectionLabelLine));
+  const width = clamp(Math.max(14, widest + horizontalInset), 14, maxWidth);
+  const contentMax = Math.max(1, maxWidth - horizontalInset);
+  const visualLines = lines.reduce(
+    (sum, line) => sum + Math.max(1, Math.ceil(Math.max(1, measureConnectionLabelLine(line)) / contentMax)),
+    0
+  );
+  const height = clamp(visualLines * 18 + 12, 26, 160);
+  return { width: Math.ceil(width), height: Math.round(height) };
+};
+
+const rectsIntersect = (a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) =>
+  a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+
+const GROUP_PAD = 28;
+const GROUP_TITLE_SPACE = 22;
+const MIN_GROUP_W = 260;
+const MIN_GROUP_H = 170;
+const MAX_GROUP_W = 5200;
+const MAX_GROUP_H = 4200;
+
+const groupResizeHandles: { id: ResizeHandle; className: string; cursor: string }[] = [
+  { id: "n", className: "top-0 left-6 right-6 h-3 -translate-y-1/2", cursor: "ns-resize" },
+  { id: "s", className: "bottom-0 left-6 right-6 h-3 translate-y-1/2", cursor: "ns-resize" },
+  { id: "e", className: "right-0 top-6 bottom-6 w-3 translate-x-1/2", cursor: "ew-resize" },
+  { id: "w", className: "left-0 top-6 bottom-6 w-3 -translate-x-1/2", cursor: "ew-resize" },
+  { id: "ne", className: "right-0 top-0 w-7 h-7 translate-x-1/2 -translate-y-1/2", cursor: "nesw-resize" },
+  { id: "nw", className: "left-0 top-0 w-7 h-7 -translate-x-1/2 -translate-y-1/2", cursor: "nwse-resize" },
+  { id: "se", className: "right-0 bottom-0 w-7 h-7 translate-x-1/2 translate-y-1/2", cursor: "nwse-resize" },
+  { id: "sw", className: "left-0 bottom-0 w-7 h-7 -translate-x-1/2 translate-y-1/2", cursor: "nesw-resize" },
+];
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const noteCenter = (note: Note): Point => {
+  const { width, height } = noteSize(note);
+  return { x: note.x + width / 2, y: note.y + height / 2 };
+};
+
+const pointInsideGroup = (point: Point, group: NoteGroup) =>
+  point.x >= group.x && point.x <= group.x + group.width && point.y >= group.y && point.y <= group.y + group.height;
+
+const groupBoxForNotes = (ids: string[], notes: Note[]) => {
+  const idSet = new Set(ids);
+  const members = notes.filter((n) => idSet.has(n.id));
+  if (!members.length) return null;
+  const minX = Math.min(...members.map((n) => n.x));
+  const minY = Math.min(...members.map((n) => n.y));
+  const maxX = Math.max(...members.map((n) => n.x + noteSize(n).width));
+  const maxY = Math.max(...members.map((n) => n.y + noteSize(n).height));
+  const width = clamp(maxX - minX + GROUP_PAD * 2, MIN_GROUP_W, MAX_GROUP_W);
+  const height = clamp(maxY - minY + GROUP_PAD * 2 + GROUP_TITLE_SPACE, MIN_GROUP_H, MAX_GROUP_H);
+  return {
+    x: Math.round(minX - GROUP_PAD),
+    y: Math.round(minY - GROUP_PAD - GROUP_TITLE_SPACE),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+};
+
+const normalizeGroup = (group: Partial<NoteGroup>, notes: Note[]): NoteGroup | null => {
+  const noteIds = Array.isArray(group.noteIds) ? group.noteIds.filter((id): id is string => typeof id === "string") : [];
+  const fallback = groupBoxForNotes(noteIds, notes) ?? { x: 0, y: 0, width: MIN_GROUP_W, height: MIN_GROUP_H };
+  return {
+    id: typeof group.id === "string" && group.id ? group.id : uid(),
+    title: typeof group.title === "string" && group.title.trim() ? group.title : "گروه",
+    noteIds,
+    color: typeof group.color === "string" && group.color ? group.color : "slate",
+    x: Math.round(isFiniteNumber(group.x) ? group.x : fallback.x),
+    y: Math.round(isFiniteNumber(group.y) ? group.y : fallback.y),
+    width: Math.round(clamp(isFiniteNumber(group.width) ? group.width : fallback.width, MIN_GROUP_W, MAX_GROUP_W)),
+    height: Math.round(clamp(isFiniteNumber(group.height) ? group.height : fallback.height, MIN_GROUP_H, MAX_GROUP_H)),
+    createdAt: isFiniteNumber(group.createdAt) ? group.createdAt : Date.now(),
+  };
+};
+
+const syncGroupMembership = (groups: NoteGroup[], notes: Note[]) => {
+  if (!groups.length) return groups;
+  const nextIds = new Map<string, string[]>();
+  groups.forEach((group) => nextIds.set(group.id, []));
+  for (const note of notes) {
+    const center = noteCenter(note);
+    for (let i = groups.length - 1; i >= 0; i -= 1) {
+      if (pointInsideGroup(center, groups[i])) {
+        nextIds.get(groups[i].id)?.push(note.id);
+        break;
+      }
+    }
+  }
+  let changed = false;
+  const next = groups.map((group) => {
+    const ids = nextIds.get(group.id) ?? [];
+    const same = ids.length === group.noteIds.length && ids.every((id, i) => id === group.noteIds[i]);
+    if (same) return group;
+    changed = true;
+    return { ...group, noteIds: ids };
+  });
+  return changed ? next : groups;
+};
+
+const groupBounds = (group: NoteGroup) => ({ x: group.x, y: group.y, width: group.width, height: group.height });
+
+const EXPORT_FORMAT = "persian-notes-canvas";
+const EXPORT_VERSION = 1;
+
+type CanvasExport = {
+  format: typeof EXPORT_FORMAT;
+  version: number;
+  exportedAt: string;
+  notes: Note[];
+  connections: NoteConnection[];
+  groups?: NoteGroup[];
+  view?: ViewState;
+};
+
+type DeleteSnapshot = { notes: Note[]; connections: NoteConnection[]; groups: NoteGroup[] };
+type ExportDialogState = { ids?: string[]; groupId?: string; filename: string; suggestions: string[] };
+type PlainLinkDialogState = {
+  id: string;
+  field: "title" | "text";
+  start: number;
+  end: number;
+  label: string;
+  url: string;
+  external: boolean;
+};
+
+const safeFilenameDate = () => new Date().toISOString().replace(/[:.]/g, "-");
+const cleanFilename = (name: string) =>
+  name
+    .trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "")
+    .slice(0, 90);
+
+const uniqueNonEmpty = (values: string[]) => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = cleanFilename(value);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+};
+
+const systemTheme = (): Theme => {
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light";
+  return "dark";
+};
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [connections, setConnections] = useState<NoteConnection[]>([]);
+  const [groups, setGroups] = useState<NoteGroup[]>([]);
+  const [draftConnection, setDraftConnection] = useState<DraftConnection | null>(null);
+  const [connectionPrompt, setConnectionPrompt] = useState<ConnectionPrompt | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [theme, setTheme] = useState<Theme>("dark"); // dark by default
+  const [selectedConnections, setSelectedConnections] = useState<Set<string>>(new Set());
+  const [selectedConnectionLabelId, setSelectedConnectionLabelId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(() => systemTheme());
   const [loaded, setLoaded] = useState(false);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [recentId, setRecentId] = useState<string | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; rows: MenuRow[] } | null>(null);
+  const [deletePrompt, setDeletePrompt] = useState<string[] | null>(null);
+  const [exportDialog, setExportDialog] = useState<ExportDialogState | null>(null);
+  const [plainLinkDialog, setPlainLinkDialog] = useState<PlainLinkDialogState | null>(null);
   const [zoomLabel, setZoomLabel] = useState(1);
   const [copyJob, setCopyJob] = useState<{ done: number; total: number } | null>(null);
   const copyingRef = useRef(false);
@@ -75,16 +384,26 @@ export default function App() {
 
   const viewRef = useRef<ViewState>({ x: 0, y: 0, zoom: 1 });
   const notesRef = useRef<Note[]>([]);
+  const connectionsRef = useRef<NoteConnection[]>([]);
+  const groupsRef = useRef<NoteGroup[]>([]);
+  const selectedRef = useRef<Set<string>>(new Set());
   const themeRef = useRef<Theme>("dark");
   const canvasRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const selRectRef = useRef<HTMLDivElement>(null);
   const noteEls = useRef(new Map<string, HTMLDivElement>());
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const gesture = useRef<Gesture>(null);
   const suppressCtx = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
+  const undoStack = useRef<DeleteSnapshot[]>([]);
+  const redoStack = useRef<DeleteSnapshot[]>([]);
+  const connectionFocusToggle = useRef<Record<string, number>>({});
 
   notesRef.current = notes;
+  connectionsRef.current = connections;
+  groupsRef.current = groups;
+  selectedRef.current = selected;
   themeRef.current = theme;
 
   /* ------------------------------ view ------------------------------ */
@@ -102,15 +421,19 @@ export default function App() {
   const persistSoon = useCallback(() => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      saveState({ notes: notesRef.current, view: viewRef.current, theme: themeRef.current }).catch(
-        () => {}
-      );
+      saveState({
+        notes: notesRef.current,
+        connections: connectionsRef.current,
+        groups: groupsRef.current,
+        view: viewRef.current,
+        theme: themeRef.current,
+      }).catch(() => {});
     }, 550);
   }, []);
 
   useEffect(() => {
     if (loaded) persistSoon();
-  }, [notes, theme, loaded, persistSoon]);
+  }, [notes, connections, groups, theme, loaded, persistSoon]);
 
   const zoomAt = useCallback(
     (cx: number, cy: number, factor: number) => {
@@ -141,10 +464,11 @@ export default function App() {
       maxX = -Infinity,
       maxY = -Infinity;
     for (const n of list) {
-      const h = noteEls.current.get(n.id)?.offsetHeight ?? 200;
+      const h = n.height ?? DEFAULT_NOTE_H;
+      const w = n.width ?? DEFAULT_NOTE_W;
       minX = Math.min(minX, n.x);
       minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.width);
+      maxX = Math.max(maxX, n.x + w);
       maxY = Math.max(maxY, n.y + h);
     }
     const pad = 100;
@@ -167,12 +491,34 @@ export default function App() {
         await clearPendingNotes();
         const c = viewCenter(viewRef.current);
         const base = notesRef.current.length;
-        const fresh = items.map((p, i) => ({
-          ...noteFromPending(p, base + i),
-          x: c.x - DEFAULT_NOTE_W / 2 + ((i % 3) - 1) * 34,
-          y: c.y - 130 + ((i % 3) - 1) * 30,
-        }));
-        setNotes((prev) => [...prev, ...fresh]);
+        const rightmost = notesRef.current.reduce<Note | null>((best, note) => {
+          if (!best) return note;
+          return note.x + (note.width ?? DEFAULT_NOTE_W) > best.x + (best.width ?? DEFAULT_NOTE_W)
+            ? note
+            : best;
+        }, null);
+        let cursorX = rightmost
+          ? rightmost.x + (rightmost.width ?? DEFAULT_NOTE_W) + 64
+          : c.x - DEFAULT_NOTE_W / 2;
+        const baseY = rightmost ? rightmost.y : c.y - DEFAULT_NOTE_H / 2;
+        const fresh = items.map((p, i) => {
+          const html = sanitizeHtml(p.html);
+          const text = (p.text || (html ? htmlToPlainText(html) : "")).trim();
+          const size = estimateNoteSize(text);
+          const note = {
+            ...noteFromPending({ ...p, text, html }, base + i),
+            ...size,
+            x: Math.round(cursorX),
+            y: Math.round(baseY + i * 34),
+          };
+          cursorX += size.width + 64;
+          return note;
+        });
+        setNotes((prev) => {
+          const next = [...prev, ...fresh];
+          setGroups((groups) => syncGroupMembership(groups, next));
+          return next;
+        });
         setRecentId(fresh[0].id);
         window.setTimeout(() => setRecentId(null), 2600);
         if (!initial)
@@ -190,8 +536,22 @@ export default function App() {
       const s = await loadState().catch(() => undefined);
       if (!alive) return;
       if (s?.notes) {
-        setNotes(s.notes);
-        setTheme(s.theme ?? "dark");
+        const savedNotes = s.notes.map((n) => {
+          const html = sanitizeHtml(n.html);
+          return {
+            ...n,
+            kind: n.kind ?? (html ? "html" : "plain"),
+            html,
+            css: sanitizeCss(n.css),
+            text: n.text || (html ? htmlToPlainText(html) : ""),
+            width: n.width ?? DEFAULT_NOTE_W,
+            height: n.height ?? DEFAULT_NOTE_H,
+          };
+        });
+        setNotes(savedNotes);
+        setConnections(s.connections ?? []);
+        setGroups((s.groups ?? []).map((g) => normalizeGroup(g, savedNotes)).filter((g): g is NoteGroup => Boolean(g)));
+        setTheme(systemTheme());
         if (s.view) viewRef.current = s.view;
       } else if (!(await getSeedFlag())) {
         await setSeedFlag();
@@ -201,8 +561,6 @@ export default function App() {
       applyView();
       setLoaded(true);
       drainPending(true);
-      // first-run: show install guide if not inside the extension
-      if (!isExtension) window.setTimeout(() => setHelpOpen(true), 900);
     })();
     const unsub = subscribePending(() => drainPending(false));
     const onBlur = () => persistSoon();
@@ -220,10 +578,43 @@ export default function App() {
     document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
 
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!media) return;
+    const sync = () => setTheme(media.matches ? "light" : "dark");
+    sync();
+    media.addEventListener?.("change", sync);
+    return () => media.removeEventListener?.("change", sync);
+  }, []);
+
   /* --------------------------- note actions ------------------------- */
   const updateNote = useCallback((id: string, patch: Partial<Note>) => {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+    const geometryChanged = ["x", "y", "width", "height"].some((key) => key in patch);
+    setNotes((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, ...patch } : n));
+      if (geometryChanged) setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
   }, []);
+
+  const cancelPlainLinkDialog = useCallback(() => setPlainLinkDialog(null), []);
+
+  const confirmPlainLinkDialog = useCallback(() => {
+    if (!plainLinkDialog?.url.trim()) return;
+    const dialog = plainLinkDialog;
+    setNotes((prev) =>
+      prev.map((note) => {
+        if (note.id !== dialog.id) return note;
+        const value = String(note[dialog.field] ?? "");
+        const start = clamp(dialog.start, 0, value.length);
+        const end = clamp(dialog.end, start, value.length);
+        const label = dialog.label || (dialog.external ? "پیوند بیرونی" : "پیوند");
+        const markdown = `[${label}](${dialog.url.trim()})`;
+        return { ...note, [dialog.field]: value.slice(0, start) + markdown + value.slice(end) };
+      })
+    );
+    setPlainLinkDialog(null);
+  }, [plainLinkDialog]);
 
   const addNoteAt = useCallback((wx?: number, wy?: number) => {
     const c = viewCenter(viewRef.current);
@@ -232,43 +623,448 @@ export default function App() {
       x: (wx ?? c.x - DEFAULT_NOTE_W / 2) + j(),
       y: (wy ?? c.y - 100) + j(),
     });
-    setNotes((prev) => [...prev, n]);
+    setNotes((prev) => {
+      const next = [...prev, n];
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
     setAutoFocusId(n.id);
     window.setTimeout(() => setAutoFocusId(null), 1600);
   }, []);
 
-  const deleteIds = useCallback(
-    (ids: string[]) => {
-      if (!ids.length) return;
-      setNotes((prev) => prev.filter((n) => !ids.includes(n.id)));
-      setSelected((prev) => {
-        const s = new Set(prev);
-        ids.forEach((id) => s.delete(id));
-        return s;
+  const addHtmlNoteAt = useCallback((wx?: number, wy?: number) => {
+    const c = viewCenter(viewRef.current);
+    const html = `<article dir="rtl"><h2>عنوان سند HTML</h2><p>این باکس جدید یک سند HTML واقعی است. متن، لینک، لیست، جدول، تصویر، و CSS اختصاصی را داخل آن ویرایش کنید.</p><ul><li>آیتم اول</li><li>آیتم دوم</li></ul></article>`;
+    const n = createNote({
+      kind: "html",
+      title: "سند HTML",
+      text: htmlToPlainText(html),
+      html,
+      css: "article { line-height: 1.8; }\nh2 { margin: 0 0 8px; }",
+      width: 560,
+      height: 430,
+      color: "violet",
+      x: wx ?? c.x - 280,
+      y: wy ?? c.y - 160,
+    });
+    setNotes((prev) => {
+      const next = [...prev, n];
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
+    setSelected(new Set([n.id]));
+    setEditingId(n.id);
+    setAutoFocusId(n.id);
+    window.setTimeout(() => setAutoFocusId(null), 1600);
+  }, []);
+
+  const addRichNotes = useCallback(
+    (items: Array<{ text: string; html?: string }>) => {
+      const clean = items.reduce<Array<{ text: string; html?: string }>>((acc, item) => {
+        const html = sanitizeHtml(item.html);
+        const text = (item.text || (html ? htmlToPlainText(html) : "")).trim();
+        if (text) acc.push({ text, html });
+        return acc;
+      }, []);
+      if (!clean.length) return;
+      const c = viewCenter(viewRef.current);
+      const rightmost = notesRef.current.reduce<Note | null>((best, note) => {
+        if (!best) return note;
+        return note.x + noteSize(note).width > best.x + noteSize(best).width ? note : best;
+      }, null);
+      let cursorX = rightmost ? rightmost.x + noteSize(rightmost).width + 64 : c.x - DEFAULT_NOTE_W / 2;
+      const baseY = rightmost ? rightmost.y : c.y - DEFAULT_NOTE_H / 2;
+      const fresh = clean.map((item, i) => {
+        const size = estimateNoteSize(item.text);
+        const note = createNote({
+          kind: item.html ? "html" : "plain",
+          text: item.text,
+          html: item.html,
+          ...size,
+          x: Math.round(cursorX),
+          y: Math.round(baseY + i * 34),
+          color: ["amber", "sky", "emerald", "violet", "rose"][i % 5],
+        });
+        cursorX += size.width + 64;
+        return note;
       });
-      push("info", ids.length > 1 ? `${faNum(ids.length)} یادداشت حذف شد` : "یادداشت حذف شد");
+      setNotes((prev) => {
+        const next = [...prev, ...fresh];
+        setGroups((groups) => syncGroupMembership(groups, next));
+        return next;
+      });
+      setSelected(new Set(fresh.map((n) => n.id)));
+      setSelectedGroupId(null);
+      setRecentId(fresh[0].id);
+      window.setTimeout(() => setRecentId(null), 2600);
+      push("success", `${faNum(fresh.length)} یادداشت از کلیپ‌بورد ساخته شد`);
     },
     [push]
   );
 
+  const addTextNotes = useCallback(
+    (texts: string[]) => addRichNotes(texts.map((text) => ({ text }))),
+    [addRichNotes]
+  );
+
+  const readClipboardRich = useCallback(async () => {
+    if (navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const htmlType = item.types.find((type) => type === "text/html");
+          if (!htmlType) continue;
+          const html = await (await item.getType(htmlType)).text();
+          const safe = sanitizeHtml(html);
+          if (!safe) continue;
+          return { text: htmlToPlainText(safe), html: safe };
+        }
+      } catch {
+        /* fall through to plain text */
+      }
+    }
+    const text = await navigator.clipboard.readText();
+    return { text };
+  }, []);
+
+  const loadClipboardAsNotes = useCallback(async () => {
+    try {
+      const rich = await readClipboardRich();
+      const html = sanitizeHtml(rich.html);
+      const normalized = (rich.text || (html ? htmlToPlainText(html) : "")).replace(/\r\n/g, "\n").trim();
+      if (!normalized) {
+        push("error", "کلیپ‌بورد خالی است");
+        return;
+      }
+      if (html) {
+        addRichNotes([{ text: normalized, html }]);
+        return;
+      }
+      let parts = normalized.split(/\n\s*\n/g).map((p) => p.trim()).filter(Boolean);
+      if (parts.length <= 1) {
+        const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+        if (lines.length > 1) parts = lines;
+      }
+      addTextNotes(parts);
+    } catch {
+      push("error", "دسترسی خواندن کلیپ‌بورد داده نشد");
+    }
+  }, [addRichNotes, addTextNotes, push, readClipboardRich]);
+
+  const exportSuggestions = useCallback((ids?: string[], groupId?: string) => {
+    const idSet = ids?.length ? new Set(ids) : null;
+    const outNotes = notesRef.current.filter((n) => !idSet || idSet.has(n.id));
+    const relatedGroups = groupId
+      ? groupsRef.current.filter((g) => g.id === groupId)
+      : groupsRef.current.filter((g) => !idSet || g.noteIds.some((id) => idSet.has(id)));
+    const titleSuggestions = outNotes.flatMap((note) => [note.title, note.text.split("\n")[0]]);
+    return uniqueNonEmpty([
+      ...relatedGroups.map((group) => group.title),
+      ...titleSuggestions,
+      idSet ? "یادداشت‌های انتخاب‌شده" : "همه یادداشت‌ها",
+      "persian-notes",
+    ]).slice(0, 5);
+  }, []);
+
+  const buildExportPayload = useCallback((ids?: string[]): CanvasExport | null => {
+    const idSet = ids?.length ? new Set(ids) : null;
+    const outNotes = notesRef.current.filter((n) => !idSet || idSet.has(n.id));
+    if (!outNotes.length) return null;
+    const outIds = new Set(outNotes.map((n) => n.id));
+    return {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      notes: outNotes,
+      connections: connectionsRef.current.filter((c) => outIds.has(c.from.noteId) && outIds.has(c.to.noteId)),
+      groups: idSet
+        ? groupsRef.current
+            .map((g) => ({ ...g, noteIds: g.noteIds.filter((id) => outIds.has(id)) }))
+            .filter((g) => g.noteIds.length > 0)
+        : groupsRef.current,
+      view: idSet ? undefined : viewRef.current,
+    };
+  }, []);
+
+  const exportNotesToFile = useCallback(
+    (ids?: string[], groupId?: string) => {
+      const payload = buildExportPayload(ids);
+      if (!payload) {
+        push("error", "یادداشتی برای ذخیره انتخاب نشده است");
+        return;
+      }
+      const suggestions = exportSuggestions(ids, groupId);
+      setMenu(null);
+      setExportDialog({ ids, groupId, suggestions, filename: suggestions[0] ?? (ids?.length ? "یادداشت‌های انتخاب‌شده" : "persian-notes") });
+    },
+    [buildExportPayload, exportSuggestions, push]
+  );
+
+  const confirmExport = useCallback(() => {
+    if (!exportDialog) return;
+    const payload = buildExportPayload(exportDialog.ids);
+    if (!payload) {
+      setExportDialog(null);
+      push("error", "یادداشتی برای ذخیره انتخاب نشده است");
+      return;
+    }
+    const idSet = exportDialog.ids?.length ? new Set(exportDialog.ids) : null;
+    const base = cleanFilename(exportDialog.filename) || exportDialog.suggestions[0] || (idSet ? "selected-notes" : "persian-notes");
+    const withExt = base.toLowerCase().endsWith(".json") ? base : `${base}-${safeFilenameDate()}.json`;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = withExt;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setExportDialog(null);
+    push("success", idSet ? "انتخاب‌شده‌ها در فایل ذخیره شد" : "همه‌ی یادداشت‌ها در فایل ذخیره شد");
+  }, [buildExportPayload, exportDialog, push]);
+
+  const cancelExport = useCallback(() => setExportDialog(null), []);
+
+  const importProject = useCallback(
+    (raw: unknown) => {
+      const data = raw as Partial<CanvasExport>;
+      if (!data || data.format !== EXPORT_FORMAT || !Array.isArray(data.notes)) {
+        push("error", "فرمت فایل یادداشت پشتیبانی نمی‌شود");
+        return;
+      }
+      const existing = new Set(notesRef.current.map((n) => n.id));
+      const idMap = new Map<string, string>();
+      const freshNotes = data.notes
+        .filter((n): n is Note => Boolean(n && typeof n.id === "string"))
+        .map((n) => {
+          const nextId = existing.has(n.id) ? uid() : n.id;
+          existing.add(nextId);
+          idMap.set(n.id, nextId);
+          const html = sanitizeHtml(n.html);
+          return {
+            ...createNote(n),
+            id: nextId,
+            kind: n.kind ?? (html ? "html" : "plain"),
+            text: n.text || (html ? htmlToPlainText(html) : ""),
+            html,
+            css: sanitizeCss(n.css),
+            overflow: n.overflow,
+            width: clamp(n.width ?? DEFAULT_NOTE_W, MIN_NOTE_W, MAX_NOTE_W),
+            height: clamp(n.height ?? DEFAULT_NOTE_H, MIN_NOTE_H, MAX_NOTE_H),
+            x: Number.isFinite(n.x) ? Math.round(n.x) : 0,
+            y: Number.isFinite(n.y) ? Math.round(n.y) : 0,
+          };
+        });
+      if (!freshNotes.length) {
+        push("error", "فایل یادداشتی برای بارگذاری نداشت");
+        return;
+      }
+      const freshIds = new Set(freshNotes.map((n) => n.id));
+      const freshConnections = (data.connections ?? [])
+        .map((c) => {
+          const fromId = idMap.get(c.from?.noteId);
+          const toId = idMap.get(c.to?.noteId);
+          if (!fromId || !toId) return null;
+          return { ...c, id: uid(), from: { ...c.from, noteId: fromId }, to: { ...c.to, noteId: toId } } as NoteConnection;
+        })
+        .filter((c): c is NoteConnection => Boolean(c));
+      const freshGroups = (data.groups ?? [])
+        .map((g) =>
+          normalizeGroup(
+            {
+              ...g,
+              id: uid(),
+              noteIds: (g.noteIds ?? []).map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)),
+              title: g.title || "گروه",
+              color: g.color || "slate",
+              createdAt: g.createdAt || Date.now(),
+            },
+            freshNotes
+          )
+        )
+        .filter((g): g is NoteGroup => Boolean(g));
+      setNotes((prev) => [...prev, ...freshNotes]);
+      setConnections((prev) => [...prev, ...freshConnections]);
+      setGroups((prev) => syncGroupMembership([...prev, ...freshGroups], [...notesRef.current, ...freshNotes]));
+      setSelected(freshGroups.length ? new Set() : freshIds);
+      setSelectedGroupId(freshGroups[0]?.id ?? null);
+      push("success", `${faNum(freshNotes.length)} یادداشت از فایل بارگذاری شد`);
+    },
+    [push]
+  );
+
+  const importProjectFile = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        importProject(JSON.parse(text));
+      } catch {
+        push("error", "خواندن فایل ناموفق بود");
+      }
+    },
+    [importProject, push]
+  );
+
+  const openImportFile = useCallback(() => fileInputRef.current?.click(), []);
+
+  const onImportFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.currentTarget.files?.[0];
+      if (file) void importProjectFile(file);
+      e.currentTarget.value = "";
+    },
+    [importProjectFile]
+  );
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if ([...e.dataTransfer.types].includes("Files")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+      e.preventDefault();
+      void importProjectFile(file);
+    },
+    [importProjectFile]
+  );
+
+  const deleteIds = useCallback((ids: string[]) => {
+    const unique = [...new Set(ids)].filter((id) => notesRef.current.some((n) => n.id === id));
+    if (!unique.length) return;
+    setMenu(null);
+    setDeletePrompt(unique);
+  }, []);
+
+  const confirmDelete = useCallback(() => {
+    const unique = deletePrompt;
+    if (!unique?.length) return;
+    const idSet = new Set(unique);
+    const doomed = notesRef.current.filter((n) => idSet.has(n.id));
+    if (!doomed.length) {
+      setDeletePrompt(null);
+      return;
+    }
+    const related = connectionsRef.current.filter(
+      (c) => idSet.has(c.from.noteId) || idSet.has(c.to.noteId)
+    );
+    const relatedGroups = groupsRef.current.filter((g) => g.noteIds.some((nid) => idSet.has(nid)));
+    undoStack.current.push({ notes: doomed, connections: related, groups: relatedGroups });
+    redoStack.current = [];
+    setNotes((prev) => prev.filter((n) => !idSet.has(n.id)));
+    setConnections((prev) => prev.filter((c) => !idSet.has(c.from.noteId) && !idSet.has(c.to.noteId)));
+    setGroups((prev) => prev.map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !idSet.has(nid)) })));
+    setSelectedGroupId((gid) => {
+      const g = groupsRef.current.find((group) => group.id === gid);
+      return g && g.noteIds.some((nid) => idSet.has(nid)) ? null : gid;
+    });
+    const relatedIds = new Set(related.map((c) => c.id));
+    setSelectedConnections((prev) => {
+      const s = new Set(prev);
+      relatedIds.forEach((id) => s.delete(id));
+      return s;
+    });
+    setEditingConnectionId((id) => (id && relatedIds.has(id) ? null : id));
+    setSelectedConnectionLabelId((id) => (id && relatedIds.has(id) ? null : id));
+    setEditingId((id) => (id && idSet.has(id) ? null : id));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      unique.forEach((id) => s.delete(id));
+      return s;
+    });
+    setDeletePrompt(null);
+    push("info", doomed.length > 1 ? `${faNum(doomed.length)} یادداشت حذف شد` : "یادداشت حذف شد");
+  }, [deletePrompt, push]);
+
+  const cancelDelete = useCallback(() => setDeletePrompt(null), []);
+
+  const undoDelete = useCallback(() => {
+    const snap = undoStack.current.pop();
+    if (!snap) return;
+    redoStack.current.push(snap);
+    const ids = new Set(snap.notes.map((n) => n.id));
+    setNotes((prev) => [...prev.filter((n) => !ids.has(n.id)), ...snap.notes]);
+    setConnections((prev) => {
+      const existing = new Set(prev.map((c) => c.id));
+      return [...prev, ...snap.connections.filter((c) => !existing.has(c.id))];
+    });
+    setGroups((prev) => {
+      const existing = new Set(prev.map((g) => g.id));
+      return [
+        ...prev.map((g) => {
+          const original = snap.groups.find((sg) => sg.id === g.id);
+          return original ? original : g;
+        }),
+        ...snap.groups.filter((g) => !existing.has(g.id)),
+      ];
+    });
+    setSelected(ids);
+    setSelectedGroupId(snap.groups[0]?.id ?? null);
+    push("success", "حذف یادداشت بازگردانده شد");
+  }, [push]);
+
+  const redoDelete = useCallback(() => {
+    const snap = redoStack.current.pop();
+    if (!snap) return;
+    undoStack.current.push(snap);
+    const ids = new Set(snap.notes.map((n) => n.id));
+    setNotes((prev) => prev.filter((n) => !ids.has(n.id)));
+    setConnections((prev) => prev.filter((c) => !ids.has(c.from.noteId) && !ids.has(c.to.noteId)));
+    setGroups((prev) => prev.map((g) => ({ ...g, noteIds: g.noteIds.filter((nid) => !ids.has(nid)) })));
+    setSelectedGroupId(null);
+    setSelected((prev) => {
+      const s = new Set(prev);
+      ids.forEach((id) => s.delete(id));
+      return s;
+    });
+    push("info", "حذف دوباره انجام شد");
+  }, [push]);
+
   const duplicateIds = useCallback(
     (ids: string[]) => {
-      setNotes((prev) => [
-        ...prev,
-        ...prev
-          .filter((n) => ids.includes(n.id))
-          .map((n) => ({
-            ...n,
-            id: uid(),
-            x: n.x + 30,
-            y: n.y + 30,
-            createdAt: Date.now(),
-          })),
-      ]);
+      setNotes((prev) => {
+        const next = [
+          ...prev,
+          ...prev
+            .filter((n) => ids.includes(n.id))
+            .map((n) => ({
+              ...n,
+              id: uid(),
+              x: n.x + 30,
+              y: n.y + 30,
+              createdAt: Date.now(),
+            })),
+        ];
+        setGroups((groups) => syncGroupMembership(groups, next));
+        return next;
+      });
       push("success", ids.length > 1 ? "یادداشت‌ها تکثیر شدند" : "یادداشت تکثیر شد");
     },
     [push]
   );
+
+  const resizeNoteIds = useCallback((ids: string[], mode: "small" | "medium" | "large" | "auto") => {
+    const unique = new Set(ids);
+    setNotes((prev) => {
+      const next = prev.map((n) => {
+        if (!unique.has(n.id)) return n;
+        if (mode === "auto") return { ...n, ...estimateNoteSize(`${n.title}\n${n.text}`.trim()) };
+        const presets = {
+          small: { width: DEFAULT_NOTE_W, height: DEFAULT_NOTE_H },
+          medium: { width: 460, height: 320 },
+          large: { width: 720, height: 520 },
+        } as const;
+        return { ...n, ...presets[mode] };
+      });
+      setGroups((groups) => syncGroupMembership(groups, next));
+      return next;
+    });
+  }, []);
 
   const copyNoteById = useCallback(
     async (id: string) => {
@@ -282,6 +1078,78 @@ export default function App() {
       }
     },
     [push]
+  );
+
+  const addConnection = useCallback((from: Endpoint, to: Endpoint) => {
+    if (from.noteId === to.noteId) return;
+    setConnections((prev) => {
+      const exists = prev.some(
+        (c) =>
+          c.from.noteId === from.noteId &&
+          c.from.side === from.side &&
+          c.to.noteId === to.noteId &&
+          c.to.side === to.side
+      );
+      if (exists) return prev;
+      return [...prev, { id: uid(), from, to, direction: "forward" }];
+    });
+  }, []);
+
+  const updateConnection = useCallback((id: string, patch: Partial<NoteConnection>) => {
+    setConnections((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }, []);
+
+  const finishConnectionLabelEdit = useCallback(
+    (id: string) => {
+      const value = connectionsRef.current.find((c) => c.id === id)?.label ?? "";
+      if (!value.trim()) {
+        updateConnection(id, { label: undefined });
+        setSelectedConnectionLabelId((current) => (current === id ? null : current));
+      }
+      setEditingConnectionId((current) => (current === id ? null : current));
+    },
+    [updateConnection]
+  );
+
+  const clearConnectionLabel = useCallback(
+    (id: string) => {
+      updateConnection(id, { label: undefined });
+      setEditingConnectionId((current) => (current === id ? null : current));
+      setSelectedConnectionLabelId((current) => (current === id ? null : current));
+      push("info", "نوشته‌ی اتصال پاک شد");
+    },
+    [push, updateConnection]
+  );
+
+  const deleteConnectionIds = useCallback(
+    (ids: string[]) => {
+      const idSet = new Set(ids);
+      if (!idSet.size) return;
+      setConnections((prev) => prev.filter((c) => !idSet.has(c.id)));
+      setSelectedConnections((prev) => {
+        const s = new Set(prev);
+        ids.forEach((id) => s.delete(id));
+        return s;
+      });
+      setEditingConnectionId((id) => (id && idSet.has(id) ? null : id));
+      setSelectedConnectionLabelId((id) => (id && idSet.has(id) ? null : id));
+      push("info", ids.length > 1 ? `${faNum(ids.length)} اتصال حذف شد` : "اتصال حذف شد");
+    },
+    [push]
+  );
+
+  const connectionPoints = useCallback(
+    (connection: NoteConnection): { from: Point; to: Point; drawFrom: Point; drawTo: Point; mid: Point } | null => {
+      const fromNote = notesRef.current.find((n) => n.id === connection.from.noteId);
+      const toNote = notesRef.current.find((n) => n.id === connection.to.noteId);
+      if (!fromNote || !toNote) return null;
+      const from = sidePoint(fromNote, connection.from.side);
+      const to = sidePoint(toNote, connection.to.side);
+      const drawFrom = outsetPoint(from, connection.from.side);
+      const drawTo = outsetPoint(to, connection.to.side);
+      return { from, to, drawFrom, drawTo, mid: midpoint(drawFrom, drawTo) };
+    },
+    []
   );
 
   const selectedNotes = useCallback(
@@ -322,25 +1190,44 @@ export default function App() {
     }
   }, [selectedNotes, push]);
 
-  const arrangeGrid = useCallback(() => {
-    const ids = selected.size ? selected : new Set(notesRef.current.map((n) => n.id));
-    const items = notesRef.current
-      .filter((n) => ids.has(n.id))
-      .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
-    if (items.length < 2) return;
-    const cols = Math.ceil(Math.sqrt(items.length));
-    const cellW = Math.max(...items.map((n) => n.width)) + 42;
-    const cellH =
-      Math.max(...items.map((n) => noteEls.current.get(n.id)?.offsetHeight ?? 220)) + 42;
-    const x0 = Math.min(...items.map((n) => n.x));
-    const y0 = Math.min(...items.map((n) => n.y));
-    const pos = new Map<string, { x: number; y: number }>();
-    items.forEach((n, i) =>
-      pos.set(n.id, { x: x0 + (i % cols) * cellW, y: y0 + Math.floor(i / cols) * cellH })
-    );
-    setNotes((prev) => prev.map((n) => (pos.has(n.id) ? { ...n, ...pos.get(n.id)! } : n)));
-    push("success", "یادداشت‌ها به‌صورت شبکه‌ای مرتب شد");
-  }, [selected, push]);
+  const createGroupFromIds = useCallback(
+    (ids: string[]) => {
+      const unique = [...new Set(ids)].filter((id) => notesRef.current.some((n) => n.id === id));
+      if (unique.length < 1) {
+        push("error", "برای ساخت گروه ابتدا یک یادداشت انتخاب کنید");
+        return;
+      }
+      const box = groupBoxForNotes(unique, notesRef.current);
+      if (!box) return;
+      const group: NoteGroup = {
+        id: uid(),
+        title: "گروه",
+        noteIds: unique,
+        color: "slate",
+        ...box,
+        createdAt: Date.now(),
+      };
+      setGroups((prev) => syncGroupMembership([...prev, group], notesRef.current));
+      setSelected(new Set());
+      setSelectedGroupId(group.id);
+      push("success", "گروه ساخته شد");
+    },
+    [push]
+  );
+
+  const updateGroup = useCallback((id: string, patch: Partial<NoteGroup>) => {
+    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+  }, []);
+
+  const deleteGroup = useCallback(
+    (id: string) => {
+      setGroups((prev) => prev.filter((g) => g.id !== id));
+      setSelectedGroupId((current) => (current === id ? null : current));
+      setEditingGroupId((current) => (current === id ? null : current));
+      push("info", "گروه حذف شد؛ یادداشت‌ها باقی ماندند");
+    },
+    [push]
+  );
 
   /* --------------------------- gestures ----------------------------- */
   const registerNoteRef = useCallback((id: string, el: HTMLDivElement | null) => {
@@ -348,12 +1235,166 @@ export default function App() {
     else noteEls.current.delete(id);
   }, []);
 
+  const worldPointFromScreen = useCallback((clientX: number, clientY: number): Point => {
+    const v = viewRef.current;
+    return { x: (clientX - v.x) / v.zoom, y: (clientY - v.y) / v.zoom };
+  }, []);
+
+  const endpointPoint = useCallback((endpoint: Endpoint): Point | null => {
+    const note = notesRef.current.find((n) => n.id === endpoint.noteId);
+    return note ? sidePoint(note, endpoint.side) : null;
+  }, []);
+
+  const beginPan = useCallback((e: React.PointerEvent) => {
+    setMenu(null);
+    setConnectionPrompt(null);
+    setEditingId(null);
+    setEditingGroupId(null);
+    setEditingConnectionId(null);
+    setSelectedConnectionLabelId(null);
+    const v = viewRef.current;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    gesture.current = { type: "pan", sx: e.clientX, sy: e.clientY, ox: v.x, oy: v.y, moved: false };
+    document.body.classList.add("grabbing");
+  }, []);
+
+  const nearestConnector = useCallback(
+    (clientX: number, clientY: number, excludeId: string): Endpoint | null => {
+      const p = worldPointFromScreen(clientX, clientY);
+      const circleSnapPx = 24;
+      let circleBest: { endpoint: Endpoint; d: number } | null = null;
+      let insideBest: { endpoint: Endpoint; d: number } | null = null;
+
+      for (const note of notesRef.current) {
+        if (note.id === excludeId) continue;
+        const { width, height } = noteSize(note);
+        const x1 = note.x;
+        const y1 = note.y;
+        const x2 = note.x + width;
+        const y2 = note.y + height;
+        const sides: ConnectionSide[] = ["top", "right", "bottom", "left"];
+
+        for (const side of sides) {
+          const sp = sidePoint(note, side);
+          const v = viewRef.current;
+          const sx = sp.x * v.zoom + v.x;
+          const sy = sp.y * v.zoom + v.y;
+          const d = Math.hypot(sx - clientX, sy - clientY);
+          if (d <= circleSnapPx && (!circleBest || d < circleBest.d)) {
+            circleBest = { endpoint: { noteId: note.id, side }, d };
+          }
+        }
+
+        const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
+        if (!inside) continue;
+        const candidates: { side: ConnectionSide; d: number }[] = [
+          { side: "top", d: Math.abs(p.y - y1) },
+          { side: "right", d: Math.abs(p.x - x2) },
+          { side: "bottom", d: Math.abs(p.y - y2) },
+          { side: "left", d: Math.abs(p.x - x1) },
+        ];
+        for (const c of candidates) {
+          if (!insideBest || c.d < insideBest.d) {
+            insideBest = { endpoint: { noteId: note.id, side: c.side }, d: c.d };
+          }
+        }
+      }
+      return circleBest?.endpoint ?? insideBest?.endpoint ?? null;
+    },
+    [worldPointFromScreen]
+  );
+
+  const onConnectorDragStart = useCallback(
+    (e: React.PointerEvent, id: string, side: ConnectionSide) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+      setConnectionPrompt(null);
+      const from = { noteId: id, side };
+      const start = sidePoint(notesRef.current.find((n) => n.id === id)!, side);
+      const move = (ev: PointerEvent) => {
+        const target = nearestConnector(ev.clientX, ev.clientY, id);
+        const targetPoint = target ? endpointPoint(target) : null;
+        setDraftConnection({ from, target, to: targetPoint ?? worldPointFromScreen(ev.clientX, ev.clientY) });
+      };
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        const target = nearestConnector(ev.clientX, ev.clientY, id);
+        const targetPoint = target ? endpointPoint(target) : null;
+        setDraftConnection(null);
+        if (target && targetPoint) {
+          addConnection(from, target);
+          push("success", "اتصال یادداشت‌ها ساخته شد");
+          return;
+        }
+        const to = worldPointFromScreen(ev.clientX, ev.clientY);
+        setConnectionPrompt({
+          x: clamp(ev.clientX, 12, window.innerWidth - 190),
+          y: clamp(ev.clientY, 12, window.innerHeight - 64),
+          from,
+          to,
+        });
+      };
+      setDraftConnection({ from, to: start, target: null });
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [addConnection, endpointPoint, nearestConnector, push, worldPointFromScreen]
+  );
+
+  const addConnectedNoteFromPrompt = useCallback(() => {
+    const prompt = connectionPrompt;
+    if (!prompt) return;
+    const newSide = oppositeSide(prompt.from.side);
+    const id = uid();
+    const w = DEFAULT_NOTE_W;
+    const h = DEFAULT_NOTE_H;
+    let x = prompt.to.x - w / 2;
+    let y = prompt.to.y - h / 2;
+    if (newSide === "top") {
+      x = prompt.to.x - w / 2;
+      y = prompt.to.y;
+    } else if (newSide === "right") {
+      x = prompt.to.x - w;
+      y = prompt.to.y - h / 2;
+    } else if (newSide === "bottom") {
+      x = prompt.to.x - w / 2;
+      y = prompt.to.y - h;
+    } else if (newSide === "left") {
+      x = prompt.to.x;
+      y = prompt.to.y - h / 2;
+    }
+    const note = createNote({ id, x: Math.round(x), y: Math.round(y), color: "violet" });
+    setNotes((prev) => [...prev, note]);
+    addConnection(prompt.from, { noteId: id, side: newSide });
+    setSelected(new Set([id]));
+    setAutoFocusId(id);
+    setRecentId(id);
+    setConnectionPrompt(null);
+    window.setTimeout(() => setAutoFocusId(null), 1600);
+    window.setTimeout(() => setRecentId(null), 2600);
+  }, [addConnection, connectionPrompt]);
+
   const onNoteDragStart = useCallback(
     (e: React.PointerEvent, id: string) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        beginPan(e);
+        return;
+      }
       if (e.button !== 0) return;
       e.stopPropagation();
       setMenu(null);
+      setEditingId((current) => (current === id ? current : null));
+      setEditingGroupId(null);
+      setEditingConnectionId(null);
+      setSelectedConnectionLabelId(null);
       if (e.ctrlKey || e.metaKey) {
+        setSelectedGroupId(null);
+        setSelectedConnections(new Set());
         setSelected((prev) => {
           const s = new Set(prev);
           if (s.has(id)) s.delete(id);
@@ -363,7 +1404,10 @@ export default function App() {
         return;
       }
       let ids: string[];
-      if (selected.has(id)) ids = [...selected];
+      const currentSelected = selectedRef.current;
+      setSelectedConnections(new Set());
+      setSelectedGroupId(null);
+      if (currentSelected.has(id)) ids = [...currentSelected];
       else {
         ids = [id];
         setSelected(new Set([id]));
@@ -376,15 +1420,142 @@ export default function App() {
       gesture.current = { type: "note", sx: e.clientX, sy: e.clientY, moved: false, ids, origins };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
-    [selected]
+    [beginPan]
   );
+
+  const onGroupPointerDown = useCallback(
+    (e: React.PointerEvent, group: NoteGroup) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("input, textarea, button, [data-group-resize]")) return;
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        beginPan(e);
+        return;
+      }
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      setMenu(null);
+      setEditingId(null);
+      setEditingConnectionId(null);
+      setSelectedGroupId(group.id);
+      setSelected(new Set());
+      setSelectedConnections(new Set());
+      setSelectedConnectionLabelId(null);
+      const origins: Record<string, { x: number; y: number }> = {};
+      for (const id of group.noteIds) {
+        const n = notesRef.current.find((note) => note.id === id);
+        if (n) origins[id] = { x: n.x, y: n.y };
+      }
+      gesture.current = {
+        type: "group",
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+        groupId: group.id,
+        ids: group.noteIds,
+        origins,
+        groupOrigin: { x: group.x, y: group.y },
+      };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [beginPan]
+  );
+
+  const startGroupResize = useCallback(
+    (e: React.PointerEvent, group: NoteGroup, handle: ResizeHandle) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setMenu(null);
+      setEditingId(null);
+      setEditingGroupId(null);
+      setSelectedGroupId(group.id);
+      setSelected(new Set());
+      setSelectedConnections(new Set());
+      setSelectedConnectionLabelId(null);
+      const start = { x: group.x, y: group.y, width: group.width, height: group.height };
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let next = start;
+
+      const computeNext = (ev: PointerEvent) => {
+        const zoom = viewRef.current.zoom;
+        const dx = (ev.clientX - sx) / zoom;
+        const dy = (ev.clientY - sy) / zoom;
+        let x = start.x;
+        let y = start.y;
+        let width = start.width;
+        let height = start.height;
+        if (handle.includes("e")) width = start.width + dx;
+        if (handle.includes("w")) {
+          width = start.width - dx;
+          x = start.x + dx;
+        }
+        if (handle.includes("s")) height = start.height + dy;
+        if (handle.includes("n")) {
+          height = start.height - dy;
+          y = start.y + dy;
+        }
+        if (width < MIN_GROUP_W) {
+          if (handle.includes("w")) x -= MIN_GROUP_W - width;
+          width = MIN_GROUP_W;
+        }
+        if (width > MAX_GROUP_W) {
+          if (handle.includes("w")) x -= MAX_GROUP_W - width;
+          width = MAX_GROUP_W;
+        }
+        if (height < MIN_GROUP_H) {
+          if (handle.includes("n")) y -= MIN_GROUP_H - height;
+          height = MIN_GROUP_H;
+        }
+        if (height > MAX_GROUP_H) {
+          if (handle.includes("n")) y -= MAX_GROUP_H - height;
+          height = MAX_GROUP_H;
+        }
+        return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+      };
+
+      const move = (ev: PointerEvent) => {
+        next = computeNext(ev);
+        setGroups((prev) => prev.map((g) => (g.id === group.id ? { ...g, ...next } : g)));
+      };
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        next = computeNext(ev);
+        const finalGroups = groupsRef.current.map((g) => (g.id === group.id ? { ...g, ...next } : g));
+        setGroups(syncGroupMembership(finalGroups, notesRef.current));
+        persistSoon();
+      };
+
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [persistSoon]
+  );
+
+  const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
+    const t = e.target as HTMLElement;
+    if (e.button !== 2 && t.closest("[data-note], [data-group]")) setMenu(null);
+  }, []);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if ((e.target as HTMLElement).closest("[data-note]")) return;
-      if ((e.target as HTMLElement).closest("input, textarea, a, button")) return;
-      if ((e.target as HTMLElement).closest("[data-ui]")) return;
+      const t = e.target as HTMLElement;
+      if (t.closest("input, textarea, a, button")) return;
+      if (t.closest("[data-ui]")) return;
+      if (e.button === 1) {
+        e.preventDefault();
+        beginPan(e);
+        return;
+      }
+      if (t.closest("[data-note], [data-group]")) return;
       setMenu(null);
+      setConnectionPrompt(null);
+      setEditingId(null);
+      setEditingGroupId(null);
+      setEditingConnectionId(null);
+      setSelectedConnectionLabelId(null);
       const v = viewRef.current;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (e.button === 2 || e.pointerType === "touch") {
@@ -392,6 +1563,10 @@ export default function App() {
         document.body.classList.add("grabbing");
       } else if (e.button === 0) {
         const additive = e.ctrlKey || e.metaKey;
+        if (!additive) {
+          setSelectedConnections(new Set());
+          setSelectedGroupId(null);
+        }
         gesture.current = {
           type: "select",
           sx: e.clientX,
@@ -403,7 +1578,7 @@ export default function App() {
         document.body.classList.add("selecting");
       }
     },
-    [selected]
+    [beginPan, selected]
   );
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
@@ -438,15 +1613,35 @@ export default function App() {
       }
       const hits: string[] = [];
       for (const n of notesRef.current) {
-        const h = noteEls.current.get(n.id)?.offsetHeight ?? 200;
+        const { width, height } = noteSize(n);
         const sx = n.x * v.zoom + v.x;
         const sy = n.y * v.zoom + v.y;
-        const sw = n.width * v.zoom;
-        const sh = h * v.zoom;
+        const sw = width * v.zoom;
+        const sh = height * v.zoom;
         if (sx < rect.x2 && sx + sw > rect.x1 && sy < rect.y2 && sy + sh > rect.y1) hits.push(n.id);
       }
+      const connectionHits: string[] = [];
+      for (const c of connectionsRef.current) {
+        const pts = connectionPoints(c);
+        if (!pts) continue;
+        const sx1 = pts.from.x * v.zoom + v.x;
+        const sy1 = pts.from.y * v.zoom + v.y;
+        const sx2 = pts.to.x * v.zoom + v.x;
+        const sy2 = pts.to.y * v.zoom + v.y;
+        const pad = 12;
+        const box = {
+          x1: Math.min(sx1, sx2) - pad,
+          y1: Math.min(sy1, sy2) - pad,
+          x2: Math.max(sx1, sx2) + pad,
+          y2: Math.max(sy1, sy2) + pad,
+        };
+        if (rectsIntersect(rect, box)) connectionHits.push(c.id);
+      }
       setSelected(new Set([...g.base, ...hits]));
-    } else if (g.type === "note") {
+      setSelectedConnections(new Set(connectionHits));
+      setSelectedConnectionLabelId(null);
+      setSelectedGroupId(null);
+    } else if (g.type === "note" || g.type === "group") {
       const dx = (e.clientX - g.sx) / v.zoom;
       const dy = (e.clientY - g.sy) / v.zoom;
       if (!g.moved && Math.abs(dx) * v.zoom + Math.abs(dy) * v.zoom > 3) {
@@ -454,13 +1649,24 @@ export default function App() {
         document.body.classList.add("dragging-note");
       }
       if (!g.moved) return;
-      for (const id of g.ids) {
-        const o = g.origins[id];
-        const el = noteEls.current.get(id);
-        if (o && el) el.style.transform = `translate3d(${o.x + dx}px, ${o.y + dy}px, 0)`;
+      setNotes((prev) =>
+        prev.map((n) =>
+          g.origins[n.id]
+            ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
+            : n
+        )
+      );
+      if (g.type === "group") {
+        setGroups((prev) =>
+          prev.map((group) =>
+            group.id === g.groupId
+              ? { ...group, x: Math.round(g.groupOrigin.x + dx), y: Math.round(g.groupOrigin.y + dy) }
+              : group
+          )
+        );
       }
     }
-  }, [applyView]);
+  }, [applyView, connectionPoints]);
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
@@ -475,19 +1681,33 @@ export default function App() {
         }
       } else if (g.type === "select") {
         if (selRectRef.current) selRectRef.current.style.display = "none";
-        if (!g.moved && !g.additive) setSelected(new Set());
-      } else if (g.type === "note") {
+        if (!g.moved && !g.additive) {
+          setSelected(new Set());
+          setSelectedConnections(new Set());
+          setSelectedConnectionLabelId(null);
+          setSelectedGroupId(null);
+        }
+      } else if (g.type === "note" || g.type === "group") {
         if (g.moved) {
           const v = viewRef.current;
           const dx = (e.clientX - g.sx) / v.zoom;
           const dy = (e.clientY - g.sy) / v.zoom;
-          setNotes((prev) =>
-            prev.map((n) =>
-              g.origins[n.id]
-                ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
-                : n
-            )
+          const finalNotes = notesRef.current.map((n) =>
+            g.origins[n.id]
+              ? { ...n, x: Math.round(g.origins[n.id].x + dx), y: Math.round(g.origins[n.id].y + dy) }
+              : n
           );
+          const finalGroupsBase =
+            g.type === "group"
+              ? groupsRef.current.map((group) =>
+                  group.id === g.groupId
+                    ? { ...group, x: Math.round(g.groupOrigin.x + dx), y: Math.round(g.groupOrigin.y + dy) }
+                    : group
+                )
+              : groupsRef.current;
+          setNotes(finalNotes);
+          setGroups(syncGroupMembership(finalGroupsBase, finalNotes));
+          persistSoon();
         }
       }
     },
@@ -499,6 +1719,8 @@ export default function App() {
     const el = canvasRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-note][data-editing="true"]')) return;
       e.preventDefault();
       zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.0085 : 0.0016)));
     };
@@ -510,22 +1732,53 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest("input, textarea, [contenteditable]")) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selected.size) {
+      const editable = t?.closest("input, textarea, select, [contenteditable]") as HTMLElement | null;
+      if (editable) {
+        const textField = editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement;
+        const isReadOnlyTextField = textField && editable.readOnly;
+        const isSelect = editable instanceof HTMLSelectElement;
+        const isEditableDom = !textField && !isSelect && (editable.isContentEditable || editable.getAttribute("contenteditable") === "true");
+        if (!isReadOnlyTextField && (textField || isSelect || isEditableDom)) return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedGroupId) {
         e.preventDefault();
-        deleteIds([...selected]);
+        deleteGroup(selectedGroupId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selectedConnectionLabelId) {
+        e.preventDefault();
+        clearConnectionLabel(selectedConnectionLabelId);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && (selected.size || selectedConnections.size)) {
+        e.preventDefault();
+        if (selected.size) deleteIds([...selected]);
+        else deleteConnectionIds([...selectedConnections]);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoDelete();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redoDelete();
       } else if (e.key === "Escape") {
         setMenu(null);
-        setHelpOpen(false);
+        setConnectionPrompt(null);
+        setDeletePrompt(null);
+        setEditingId(null);
+        setEditingGroupId(null);
+        setEditingConnectionId(null);
+        setSelectedConnectionLabelId(null);
+        setDraftConnection(null);
         setSelected(new Set());
+        setSelectedConnections(new Set());
+        setSelectedGroupId(null);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         setSelected(new Set(notesRef.current.map((n) => n.id)));
+        setSelectedConnections(new Set());
+        setSelectedConnectionLabelId(null);
+        setSelectedGroupId(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, deleteIds]);
+  }, [selected, selectedConnections, selectedConnectionLabelId, selectedGroupId, clearConnectionLabel, deleteGroup, deleteIds, deleteConnectionIds, undoDelete, redoDelete]);
 
   /* -------------------------- context menus ------------------------- */
   const clampMenu = (x: number, y: number, estH: number) => ({
@@ -533,12 +1786,145 @@ export default function App() {
     y: clamp(y, 8, window.innerHeight - estH - 12),
   });
 
-  const downloadExtension = () => {
-    const a = document.createElement("a");
-    a.href = "persian-notes-extension.zip";
-    a.download = "persian-notes-extension.zip";
-    a.click();
-  };
+  const openEditorMenu = useCallback(
+    (
+      e: React.MouseEvent<HTMLInputElement | HTMLTextAreaElement>,
+      id: string,
+      field: "title" | "text"
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = e.currentTarget;
+      const hasSelection = el.selectionStart !== el.selectionEnd;
+
+      const applyValue = (next: string, start: number, end = start) => {
+        updateNote(id, { [field]: next } as Partial<Note>);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(start, end);
+        });
+      };
+
+      const replaceSelection = (text: string, selectStart?: number, selectEnd?: number) => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const next = el.value.slice(0, start) + text + el.value.slice(end);
+        applyValue(next, selectStart ?? start + text.length, selectEnd ?? start + text.length);
+      };
+
+      const transformSelectedLines = (transform: (line: string, i: number) => string) => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const lineStart = el.value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+        const foundEnd = el.value.indexOf("\n", end);
+        const lineEnd = foundEnd === -1 ? el.value.length : foundEnd;
+        const selectedText = el.value.slice(lineStart, lineEnd) || el.value.slice(start, end) || "";
+        const transformed = selectedText.split("\n").map(transform).join("\n");
+        const next = el.value.slice(0, lineStart) + transformed + el.value.slice(lineEnd);
+        applyValue(next, lineStart, lineStart + transformed.length);
+      };
+
+      const removeLineMarkers = (line: string) =>
+        line.replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|-\s+\[[ xX]\]\s+|>\s+)/, "");
+
+      const copySelected = async () => {
+        if (!hasSelection) return;
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        await navigator.clipboard.writeText(el.value.slice(start, end));
+        push("success", "متن کپی شد");
+      };
+
+      const cutSelected = async () => {
+        if (!hasSelection) return;
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        await navigator.clipboard.writeText(el.value.slice(start, end));
+        applyValue(el.value.slice(0, start) + el.value.slice(end), start);
+        push("success", "متن بریده شد");
+      };
+
+      const pasteText = async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) replaceSelection(text);
+        } catch {
+          push("error", "دسترسی خواندن کلیپ‌بورد داده نشد");
+        }
+      };
+
+      const insertLink = (external = false) => {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? start;
+        const label = el.value.slice(start, end) || (external ? "پیوند بیرونی" : "پیوند");
+        setPlainLinkDialog({ id, field, start, end, label, url: "", external });
+      };
+
+      const attachFile = () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.onchange = () => {
+          const files = Array.from(input.files ?? []);
+          if (!files.length) return;
+          replaceSelection(files.map((f) => `📎 ${f.name}`).join("\n"));
+        };
+        input.click();
+      };
+
+      const rows: MenuRow[] = [
+        { icon: Link, label: "افزودن پیوند", onClick: () => insertLink(false) },
+        { icon: ExternalLink, label: "افزودن پیوند بیرونی", onClick: () => insertLink(true) },
+        { icon: FilePlus, label: "فایل پیوست", onClick: attachFile },
+        { type: "sep" },
+        {
+          type: "submenu",
+          icon: Pilcrow,
+          label: "بندنوشت",
+          rows: [
+            { icon: List, label: "فهرست گلوله‌ای", onClick: () => transformSelectedLines((line) => `- ${removeLineMarkers(line)}`) },
+            { icon: ListOrdered, label: "فهرست شماره‌دار", onClick: () => transformSelectedLines((line, i) => `${i + 1}. ${removeLineMarkers(line)}`) },
+            { icon: ListChecks, label: "فهرست کارها", onClick: () => transformSelectedLines((line) => `- [ ] ${removeLineMarkers(line)}`) },
+            { icon: Heading1, label: "۱ سرفصل", onClick: () => transformSelectedLines((line) => `# ${removeLineMarkers(line)}`) },
+            { icon: Heading2, label: "۲ سرفصل", onClick: () => transformSelectedLines((line) => `## ${removeLineMarkers(line)}`) },
+            { icon: Heading3, label: "۳ سرفصل", onClick: () => transformSelectedLines((line) => `### ${removeLineMarkers(line)}`) },
+            { icon: Heading4, label: "۴ سرفصل", onClick: () => transformSelectedLines((line) => `#### ${removeLineMarkers(line)}`) },
+            { icon: Heading5, label: "۵ سرفصل", onClick: () => transformSelectedLines((line) => `##### ${removeLineMarkers(line)}`) },
+            { icon: Heading6, label: "۶ سرفصل", onClick: () => transformSelectedLines((line) => `###### ${removeLineMarkers(line)}`) },
+            { icon: Pilcrow, label: "تنه", onClick: () => transformSelectedLines((line) => removeLineMarkers(line)) },
+            { icon: Quote, label: "نقل‌قول", onClick: () => transformSelectedLines((line) => `> ${removeLineMarkers(line)}`) },
+          ],
+        },
+        {
+          type: "submenu",
+          icon: TextCursorInput,
+          label: "درج",
+          rows: [
+            { icon: Minus, label: "جداکننده", onClick: () => replaceSelection("\n---\n") },
+            { icon: TextCursorInput, label: "تاریخ امروز", onClick: () => replaceSelection(new Date().toLocaleDateString("fa-IR")) },
+            { icon: TextCursorInput, label: "زمان فعلی", onClick: () => replaceSelection(new Date().toLocaleTimeString("fa-IR")) },
+            { icon: Quote, label: "بلوک نقل‌قول", onClick: () => transformSelectedLines((line) => `> ${removeLineMarkers(line)}`) },
+          ],
+        },
+        { type: "sep" },
+        { icon: Scissors, label: "برش", disabled: !hasSelection, onClick: () => void cutSelected() },
+        { icon: Copy, label: "کپی", disabled: !hasSelection, onClick: () => void copySelected() },
+        { icon: ClipboardPaste, label: "جایگذاری", onClick: () => void pasteText() },
+        { icon: Clipboard, label: "جایگذاری به‌صورت متن ساده", onClick: () => void pasteText() },
+        {
+          icon: ClipboardCopy,
+          label: "انتخاب همه",
+          onClick: () => {
+            el.focus();
+            el.select();
+          },
+        },
+      ];
+
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 430), rows });
+    },
+    [push, updateNote]
+  );
 
   const openCanvasMenu = useCallback(
     (x: number, y: number) => {
@@ -551,35 +1937,66 @@ export default function App() {
           onClick: () => addNoteAt((x - v.x) / v.zoom, (y - v.y) / v.zoom),
         },
         {
-          icon: MousePointer2,
-          label: "انتخاب همه‌ی یادداشت‌ها",
-          hint: "Ctrl+A",
-          onClick: () => setSelected(new Set(notesRef.current.map((n) => n.id))),
+          icon: FilePlus,
+          label: "باکس HTML / سند کوچک",
+          onClick: () => addHtmlNoteAt((x - v.x) / v.zoom, (y - v.y) / v.zoom),
         },
-        { icon: LayoutGrid, label: "چیدمان شبکه‌ای", onClick: () => arrangeGrid() },
+        { icon: ClipboardPaste, label: "بارگذاری کلیپ‌بورد به یادداشت‌های جداگانه", onClick: () => void loadClipboardAsNotes() },
         { type: "sep" },
-        { icon: Maximize, label: "نمایش همه‌ی یادداشت‌ها", onClick: fitView },
+        { icon: Download, label: "ذخیره همه در فایل JSON", onClick: () => exportNotesToFile() },
         {
-          icon: RotateCcw,
-          label: "بازنشانی نما (۱۰۰٪)",
-          onClick: () => {
-            viewRef.current = { x: 0, y: 0, zoom: 1 };
-            applyView();
-            persistSoon();
-          },
+          icon: Download,
+          label: "ذخیره فقط انتخاب‌شده‌ها",
+          disabled: selected.size === 0,
+          onClick: () => exportNotesToFile([...selected]),
         },
-        {
-          icon: themeRef.current === "dark" ? Sun : Moon,
-          label: themeRef.current === "dark" ? "حالت روشن" : "حالت تاریک",
-          onClick: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
-        },
-        { type: "sep" },
-        { icon: Download, label: "دانلود فایل نصبی افزونه", onClick: downloadExtension },
-        { icon: HelpCircle, label: "راهنما و نصب", onClick: () => setHelpOpen(true) },
+        { icon: Upload, label: "بارگذاری فایل یادداشت", onClick: openImportFile },
       ];
-      setMenu({ ...clampMenu(x, y, 380), rows });
+      setMenu({ ...clampMenu(x, y, 220), rows });
     },
-    [addNoteAt, arrangeGrid, fitView, applyView, persistSoon]
+    [addHtmlNoteAt, addNoteAt, exportNotesToFile, loadClipboardAsNotes, openImportFile, selected]
+  );
+
+  const focusNoteById = useCallback(
+    (noteId: string) => {
+      const note = notesRef.current.find((n) => n.id === noteId);
+      if (!note) return;
+      const { width, height } = noteSize(note);
+      const zoom = clamp(Math.max(viewRef.current.zoom, 1.18), MIN_ZOOM, 1.65);
+      viewRef.current.zoom = zoom;
+      viewRef.current.x = window.innerWidth / 2 - (note.x + width / 2) * zoom;
+      viewRef.current.y = window.innerHeight / 2 - (note.y + height / 2) * zoom;
+      applyView();
+      persistSoon();
+      setSelected(new Set([note.id]));
+      setSelectedGroupId(null);
+      push("info", "یادداشت مقصد نمایش داده شد");
+    },
+    [applyView, persistSoon, push]
+  );
+
+  const focusConnectedNote = useCallback(
+    (id: string) => {
+      const c = connectionsRef.current.find((x) => x.id === id);
+      if (!c) return;
+      const nextIndex = connectionFocusToggle.current[id] === 1 ? 0 : 1;
+      connectionFocusToggle.current[id] = nextIndex;
+      const endpoint = nextIndex === 1 ? c.to : c.from;
+      const note = notesRef.current.find((n) => n.id === endpoint.noteId);
+      if (!note) return;
+      const { width, height } = noteSize(note);
+      const zoom = clamp(Math.max(viewRef.current.zoom, 1.25), MIN_ZOOM, 1.65);
+      viewRef.current.zoom = zoom;
+      viewRef.current.x = window.innerWidth / 2 - (note.x + width / 2) * zoom;
+      viewRef.current.y = window.innerHeight / 2 - (note.y + height / 2) * zoom;
+      applyView();
+      persistSoon();
+      setSelected(new Set([note.id]));
+      setSelectedConnections(new Set([id]));
+      setSelectedConnectionLabelId(null);
+      push("info", "یادداشت متصل نمایش داده شد");
+    },
+    [applyView, persistSoon, push]
   );
 
   const onNoteContextMenu = useCallback(
@@ -589,10 +2006,18 @@ export default function App() {
         ids = [id];
         setSelected(new Set([id]));
       }
+      setSelectedGroupId(null);
+      setEditingGroupId(null);
       const multi = ids.length > 1;
       const colorShared =
         notesRef.current.find((n) => n.id === id)?.color ?? "slate";
       const rows: MenuRow[] = [
+        {
+          icon: FolderPlus,
+          label: multi ? "ساخت گروه از انتخاب‌شده‌ها" : "ساخت گروه برای این یادداشت",
+          onClick: () => createGroupFromIds(ids),
+        },
+        { type: "sep" },
         { type: "label", text: multi ? `${faNum(ids.length)} یادداشت انتخاب شده` : "یادداشت" },
         ...(multi
           ? [
@@ -604,6 +2029,18 @@ export default function App() {
           icon: CopyPlus,
           label: multi ? "تکثیر همه" : "تکثیر",
           onClick: () => duplicateIds(ids),
+        },
+        { icon: Download, label: multi ? "ذخیره انتخاب‌شده‌ها در فایل" : "ذخیره این یادداشت در فایل", onClick: () => exportNotesToFile(ids) },
+        {
+          type: "submenu",
+          icon: Maximize,
+          label: "تغییر اندازه",
+          rows: [
+            { icon: Minus, label: "اندازه پیش‌فرض", onClick: () => resizeNoteIds(ids, "small") },
+            { icon: Maximize, label: "متوسط", onClick: () => resizeNoteIds(ids, "medium") },
+            { icon: Maximize, label: "بزرگ", onClick: () => resizeNoteIds(ids, "large") },
+            { icon: TextCursorInput, label: "اندازه خودکار بر اساس متن", onClick: () => resizeNoteIds(ids, "auto") },
+          ],
         },
         { type: "label", text: "رنگ یادداشت" },
         {
@@ -617,7 +2054,72 @@ export default function App() {
       ];
       setMenu({ ...clampMenu(e.clientX, e.clientY, 330), rows });
     },
-    [selected, copySeparate, copyAll, copyNoteById, duplicateIds, deleteIds]
+    [selected, copySeparate, copyAll, copyNoteById, duplicateIds, exportNotesToFile, createGroupFromIds, resizeNoteIds, deleteIds]
+  );
+
+  const onGroupContextMenu = useCallback(
+    (e: React.MouseEvent, group: NoteGroup) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedGroupId(group.id);
+      setSelected(new Set());
+      setSelectedConnections(new Set());
+      setSelectedConnectionLabelId(null);
+      setEditingId(null);
+      const rows: MenuRow[] = [
+        { type: "label", text: group.title || "گروه" },
+        {
+          icon: TextCursorInput,
+          label: "تغییر نام گروه در جای خودش",
+          onClick: () => setEditingGroupId(group.id),
+        },
+        { type: "label", text: "رنگ گروه" },
+        { type: "swatches", current: group.color, onPick: (color) => updateGroup(group.id, { color }) },
+        { type: "sep" },
+        { icon: Download, label: "ذخیره یادداشت‌های این گروه", onClick: () => exportNotesToFile(group.noteIds, group.id) },
+        { icon: Trash2, label: "حذف گروه", danger: true, onClick: () => deleteGroup(group.id) },
+      ];
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 330), rows });
+    },
+    [clampMenu, deleteGroup, exportNotesToFile, updateGroup]
+  );
+
+  const onConnectionContextMenu = useCallback(
+    (e: React.MouseEvent, id: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const connection = connectionsRef.current.find((c) => c.id === id);
+      if (!connection) return;
+      setSelected(new Set());
+      setSelectedGroupId(null);
+      setEditingGroupId(null);
+      setSelectedConnections(new Set([id]));
+      setSelectedConnectionLabelId(null);
+      const pts = connectionPoints(connection);
+      if (pts) {
+        const clickPoint = worldPointFromScreen(e.clientX, e.clientY);
+        const fromDistance = Math.hypot(clickPoint.x - pts.from.x, clickPoint.y - pts.from.y);
+        const toDistance = Math.hypot(clickPoint.x - pts.to.x, clickPoint.y - pts.to.y);
+        connectionFocusToggle.current[id] = fromDistance <= toDistance ? 0 : 1;
+      }
+      const rows: MenuRow[] = [
+        {
+          type: "swatches",
+          current: connectionColor(connection),
+          colors: CONNECTION_COLORS.map((color) => ({ id: color.hex, name: color.name, hex: color.hex })),
+          onPick: (color) => updateConnection(id, { color }),
+        },
+        { type: "label", text: "اتصال" },
+        { icon: Minus, label: "فلش بدون جهت", onClick: () => updateConnection(id, { direction: "none" }) },
+        { icon: ArrowRight, label: "فلش تک‌جهته", onClick: () => updateConnection(id, { direction: "forward" }) },
+        { icon: ArrowLeftRight, label: "فلش دوجهته", onClick: () => updateConnection(id, { direction: "both" }) },
+        { type: "sep" },
+        { icon: MousePointer2, label: "رفتن به اتصال", onClick: () => focusConnectedNote(id) },
+        { icon: Trash2, label: "حذف اتصال", danger: true, onClick: () => deleteConnectionIds([id]) },
+      ];
+      setMenu({ ...clampMenu(e.clientX, e.clientY, 340), rows });
+    },
+    [clampMenu, connectionPoints, deleteConnectionIds, focusConnectedNote, updateConnection, worldPointFromScreen]
   );
 
   const onRootContextMenu = useCallback(
@@ -630,7 +2132,7 @@ export default function App() {
         suppressCtx.current = false;
         return;
       }
-      if (t.closest("[data-note]")) return; // handled by NoteCard
+      if (t.closest("[data-note], [data-group], [data-connection-label]")) return; // handled by NoteCard/group/connection label
       openCanvasMenu(e.clientX, e.clientY);
     },
     [openCanvasMenu]
@@ -639,7 +2141,7 @@ export default function App() {
   const onDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest("[data-note]") || t.closest("input, textarea, button, a") || t.closest("[data-ui]"))
+      if (t.closest("[data-note], [data-group], [data-connection-label]") || t.closest("input, textarea, button, a") || t.closest("[data-ui]"))
         return;
       const v = viewRef.current;
       addNoteAt((e.clientX - v.x) / v.zoom, (e.clientY - v.y) / v.zoom);
@@ -653,41 +2155,351 @@ export default function App() {
       ref={canvasRef}
       className="canvas-grid fixed inset-0 overflow-hidden"
       style={{ touchAction: "none" }}
+      onPointerDownCapture={onPointerDownCapture}
+      onAuxClick={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onContextMenu={onRootContextMenu}
       onDoubleClick={onDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={onImportFileChange}
+      />
       <div className="vignette" />
 
       {/* world */}
-      <div ref={worldRef} className="absolute left-0 top-0 will-change-transform" style={{ transformOrigin: "0 0" }}>
-        {notes.map((n) => (
-          <NoteCard
-            key={n.id}
-            note={n}
-            selected={selected.has(n.id)}
-            zoom={zoomLabel}
-            autoFocusId={autoFocusId}
-            recentId={recentId}
-            onChange={updateNote}
-            onDelete={(id) => deleteIds([id])}
-            onCopy={copyNoteById}
-            onDragStart={onNoteDragStart}
-            onContextMenu={onNoteContextMenu}
-            registerRef={registerNoteRef}
-            interactive
-          />
-        ))}
+      <div ref={worldRef} className="absolute left-0 top-0" style={{ transformOrigin: "0 0" }}>
+        <svg className="absolute left-0 top-0 overflow-visible z-[5]" width="1" height="1">
+          <defs>
+            <marker id="note-arrow" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
+            </marker>
+            <marker id="note-arrow-start" markerWidth="6" markerHeight="6" refX="5.1" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+              <path d="M 0 0 L 6 3 L 0 6 z" fill="context-stroke" />
+            </marker>
+          </defs>
+          {connections.map((c) => {
+            const pts = connectionPoints(c);
+            if (!pts) return null;
+            const d = connectionPath(pts.drawFrom, c.from.side, pts.drawTo, c.to.side);
+            const isSelected = selectedConnections.has(c.id);
+            const direction = connectionDirection(c);
+            const color = connectionColor(c);
+            const selectConnection = (event: React.MouseEvent<SVGPathElement>) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelected(new Set());
+              setEditingId(null);
+              setEditingGroupId(null);
+              setSelectedGroupId(null);
+              setSelectedConnectionLabelId(null);
+              setEditingConnectionId(null);
+              setSelectedConnections((prev) => {
+                if (event.ctrlKey || event.metaKey) {
+                  const next = new Set(prev);
+                  if (next.has(c.id)) next.delete(c.id);
+                  else next.add(c.id);
+                  return next;
+                }
+                return new Set([c.id]);
+              });
+            };
+            return (
+              <g key={c.id}>
+                <path
+                  d={d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={18}
+                  strokeLinecap="round"
+                  style={{ pointerEvents: "stroke", cursor: "pointer" }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={selectConnection}
+                  onDoubleClick={(event) => {
+                    selectConnection(event);
+                    setEditingConnectionId(c.id);
+                    setSelectedConnectionLabelId(c.id);
+                  }}
+                  onContextMenu={(event) => onConnectionContextMenu(event, c.id)}
+                />
+                {isSelected && (
+                  <path
+                    d={d}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={8}
+                    strokeLinecap="round"
+                    opacity={0.25}
+                    style={{ pointerEvents: "none" }}
+                  />
+                )}
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={2.5}
+                  strokeLinecap="round"
+                  markerStart={direction === "both" ? "url(#note-arrow-start)" : undefined}
+                  markerEnd={direction === "forward" || direction === "both" ? "url(#note-arrow)" : undefined}
+                  opacity={isSelected ? 1 : 0.9}
+                  style={{ pointerEvents: "none", filter: isSelected ? "drop-shadow(0 0 5px rgba(139,149,167,.5))" : undefined }}
+                />
+
+              </g>
+            );
+          })}
+          {draftConnection && (() => {
+            const from = endpointPoint(draftConnection.from);
+            if (!from) return null;
+            const toSide = draftConnection.target?.side ?? oppositeSide(draftConnection.from.side);
+            return (
+              <path
+                d={connectionPath(from, draftConnection.from.side, draftConnection.to, toSide)}
+                fill="none"
+                stroke={CONNECTION_COLOR}
+                strokeWidth={2.5}
+                strokeDasharray="7 7"
+                strokeLinecap="round"
+                markerEnd="url(#note-arrow)"
+                opacity={0.95}
+              />
+            );
+          })()}
+          {connectionPrompt && (() => {
+            const from = endpointPoint(connectionPrompt.from);
+            if (!from) return null;
+            const toSide = oppositeSide(connectionPrompt.from.side);
+            return (
+              <path
+                d={connectionPath(from, connectionPrompt.from.side, connectionPrompt.to, toSide)}
+                fill="none"
+                stroke={CONNECTION_COLOR}
+                strokeWidth={2.5}
+                strokeDasharray="7 7"
+                strokeLinecap="round"
+                markerEnd="url(#note-arrow)"
+                opacity={0.95}
+              />
+            );
+          })()}
+        </svg>
+        {groups.map((group) => {
+          const box = groupBounds(group);
+          const hex = colorHex(group.color);
+          const isSelected = selectedGroupId === group.id;
+          const isEditingGroup = editingGroupId === group.id;
+          return (
+            <div
+              key={group.id}
+              data-group={group.id}
+              className={`note-group group absolute z-0 ${isSelected ? "note-group-selected" : ""}`}
+              style={{
+                left: box.x,
+                top: box.y,
+                width: box.width,
+                height: box.height,
+                zIndex: 0,
+                ["--group-color" as any]: hex,
+              }}
+              onPointerDown={(e) => onGroupPointerDown(e, group)}
+              onContextMenu={(e) => onGroupContextMenu(e, group)}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setSelectedGroupId(group.id);
+                setSelected(new Set());
+                setEditingGroupId(group.id);
+              }}
+            >
+              <div
+                className="note-group-title"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedGroupId(group.id);
+                  setSelected(new Set());
+                  setEditingGroupId(group.id);
+                }}
+              >
+                {isEditingGroup ? (
+                  <input
+                    autoFocus
+                    dir="auto"
+                    className="note-group-title-input"
+                    value={group.title}
+                    placeholder="نام گروه"
+                    style={{ width: `${Math.max(4, Math.min(28, Array.from(group.title || "نام گروه").length + 1))}ch` }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => updateGroup(group.id, { title: e.target.value })}
+                    onBlur={() => {
+                      if (!group.title.trim()) updateGroup(group.id, { title: "گروه" });
+                      setEditingGroupId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingGroupId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  group.title || "گروه"
+                )}
+              </div>
+              <div data-group-resize className="absolute inset-0 pointer-events-none">
+                {groupResizeHandles.map((handle) => (
+                  <button
+                    key={handle.id}
+                    type="button"
+                    data-group-resize
+                    title="تغییر اندازه گروه"
+                    className={`group-resize-handle absolute rounded-xl ${handle.className}`}
+                    style={{ cursor: handle.cursor }}
+                    onPointerDown={(e) => startGroupResize(e, group, handle.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        {connections.map((c) => {
+          const pts = connectionPoints(c);
+          if (!pts) return null;
+          const isEditingLabel = editingConnectionId === c.id;
+          const hasLabel = Boolean(c.label);
+          if (!hasLabel && !isEditingLabel) return null;
+          const color = connectionColor(c);
+          const isLabelSelected = selectedConnectionLabelId === c.id;
+          const labelValue = c.label ?? "";
+          const labelDir = labelValue.trim() ? "auto" : "rtl";
+          const labelBox = connectionLabelBoxSize(labelValue);
+          return (
+            <div
+              key={`label-${c.id}`}
+              data-connection-label
+              className={`connection-label-shell absolute z-30 -translate-x-1/2 -translate-y-1/2 pointer-events-auto ${
+                isLabelSelected ? "connection-label-shell-selected" : ""
+              }`}
+              style={{ left: pts.mid.x, top: pts.mid.y }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelected(new Set());
+                if (!selectedConnections.has(c.id)) {
+                  setSelectedConnections(new Set([c.id]));
+                  setSelectedConnectionLabelId(null);
+                } else {
+                  setSelectedConnectionLabelId(c.id);
+                }
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setSelected(new Set());
+                setSelectedConnections(new Set([c.id]));
+                setSelectedConnectionLabelId(c.id);
+                setEditingConnectionId(c.id);
+              }}
+              onContextMenu={(e) => onConnectionContextMenu(e, c.id)}
+            >
+              {isEditingLabel ? (
+                <textarea
+                  autoFocus
+                  dir={labelDir}
+                  value={labelValue}
+                  rows={1}
+                  wrap="soft"
+                  className="connection-label-input"
+                  style={{ borderColor: color, color, width: labelBox.width, height: labelBox.height }}
+                  onChange={(e) => updateConnection(c.id, { label: e.target.value })}
+                  onBlur={() => finishConnectionLabelEdit(c.id)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      finishConnectionLabelEdit(c.id);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="connection-label"
+                  dir={labelDir}
+                  style={{ borderColor: color, color, width: labelBox.width, minHeight: labelBox.height }}
+                >
+                  <span className="connection-label-text">{labelValue}</span>
+                </button>
+              )}
+              {isLabelSelected && !isEditingLabel && (
+                <button
+                  type="button"
+                  className="connection-label-delete"
+                  title="پاک کردن نوشته اتصال"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    clearConnectionLabel(c.id);
+                  }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {notes.map((n) => {
+          const common = {
+            key: n.id,
+            note: n,
+            selected: selected.has(n.id),
+            zoom: zoomLabel,
+            autoFocusId,
+            recentId,
+            editing: editingId === n.id,
+            onChange: updateNote,
+            onDelete: (id: string) => deleteIds([id]),
+            onRequestEdit: (id: string) => {
+              setEditingId(id);
+              setEditingGroupId(null);
+              setSelected(new Set([id]));
+              setSelectedGroupId(null);
+              setSelectedConnections(new Set());
+              setSelectedConnectionLabelId(null);
+            },
+            onCopy: copyNoteById,
+            onDragStart: onNoteDragStart,
+            onConnectorDragStart,
+            onContextMenu: onNoteContextMenu,
+            registerRef: registerNoteRef,
+            interactive: true,
+          };
+          return n.kind === "html" ? (
+            <HtmlNoteCard {...common} onInternalLink={focusNoteById} />
+          ) : (
+            <NoteCard {...common} onEditorContextMenu={openEditorMenu} />
+          );
+        })}
       </div>
 
       {/* selection rectangle */}
       <div ref={selRectRef} className="selection-rect" style={{ display: "none" }} />
 
       {loaded && notes.length === 0 && (
-        <EmptyState onAdd={() => addNoteAt()} onHelp={() => setHelpOpen(true)} />
+        <EmptyState onAdd={() => addNoteAt()} />
       )}
 
       <Toolbar
@@ -705,12 +2517,213 @@ export default function App() {
         }}
         onAdd={() => addNoteAt()}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        onHelp={() => setHelpOpen(true)}
+        onUndo={undoDelete}
+        onRedo={redoDelete}
         onCopySeparate={copySeparate}
         onCopyCombined={copyAll}
         onDeleteSelected={() => deleteIds([...selected])}
         onClearSelection={() => setSelected(new Set())}
       />
+
+      <AnimatePresence>
+        {connectionPrompt && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            className="fixed z-[90] glass rounded-2xl p-1.5 shadow-2xl"
+            style={{ left: connectionPrompt.x, top: connectionPrompt.y }}
+          >
+            <button
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+              onClick={addConnectedNoteFromPrompt}
+            >
+              <Plus size={15} style={{ color: "var(--accent)" }} /> افزودن یادداشت
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deletePrompt && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelDelete}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-sm shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">حذف یادداشت</h3>
+              <p className="text-[12.5px] leading-6 mb-5" style={{ color: "var(--text-dim)" }}>
+                {deletePrompt.length > 1
+                  ? `آیا از حذف ${faNum(deletePrompt.length)} یادداشت مطمئن هستید؟`
+                  : "آیا از حذف این یادداشت مطمئن هستید؟"}
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelDelete}
+                >
+                  لغو
+                </button>
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-rose-500 hover:bg-rose-600 transition-colors cursor-pointer"
+                  onClick={confirmDelete}
+                >
+                  حذف
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {plainLinkDialog && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelPlainLinkDialog}
+          >
+            <motion.form
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-md shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+              onSubmit={(e) => {
+                e.preventDefault();
+                confirmPlainLinkDialog();
+              }}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">{plainLinkDialog.external ? "افزودن پیوند بیرونی" : "افزودن پیوند"}</h3>
+              <p className="text-[12.5px] leading-6 mb-3" style={{ color: "var(--text-dim)" }}>
+                آدرس پیوند را داخل خود برنامه وارد کنید.
+              </p>
+              <input
+                autoFocus
+                dir="ltr"
+                value={plainLinkDialog.url}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-3"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="https://example.com"
+                onChange={(e) => setPlainLinkDialog((state) => (state ? { ...state, url: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelPlainLinkDialog();
+                }}
+              />
+              <label className="block text-[11px] font-bold mb-1" style={{ color: "var(--text-dim)" }}>متن نمایشی</label>
+              <input
+                dir="auto"
+                value={plainLinkDialog.label}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-5"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="متن لینک"
+                onChange={(e) => setPlainLinkDialog((state) => (state ? { ...state, label: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") cancelPlainLinkDialog();
+                }}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelPlainLinkDialog}
+                >
+                  لغو
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-sky-500 hover:bg-sky-600 transition-colors cursor-pointer"
+                >
+                  اعمال پیوند
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {exportDialog && (
+          <motion.div
+            data-ui
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] flex items-center justify-center p-4"
+            style={{ background: "rgba(4,6,10,.42)", backdropFilter: "blur(4px)" }}
+            onPointerDown={cancelExport}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
+              className="glass rounded-3xl p-5 w-full max-w-md shadow-2xl"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-[15px] font-extrabold mb-2">نام فایل ذخیره</h3>
+              <p className="text-[12.5px] leading-6 mb-3" style={{ color: "var(--text-dim)" }}>
+                قبل از ذخیره، نام فایل را وارد کنید یا یکی از پیشنهادها را انتخاب کنید.
+              </p>
+              <input
+                autoFocus
+                dir="auto"
+                value={exportDialog.filename}
+                className="w-full rounded-2xl px-3 py-2.5 text-[13px] font-bold outline-none mb-3"
+                style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                placeholder="نام فایل"
+                onChange={(e) => setExportDialog((state) => (state ? { ...state, filename: e.target.value } : state))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmExport();
+                  else if (e.key === "Escape") cancelExport();
+                }}
+              />
+              <div className="flex flex-wrap gap-1.5 mb-5">
+                {exportDialog.suggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold transition-colors cursor-pointer"
+                    style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)" }}
+                    onClick={() => setExportDialog((state) => (state ? { ...state, filename: suggestion } : state))}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-bold hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  onClick={cancelExport}
+                >
+                  لغو
+                </button>
+                <button
+                  className="px-4 py-2 rounded-xl text-[13px] font-extrabold text-white bg-sky-500 hover:bg-sky-600 transition-colors cursor-pointer"
+                  onClick={confirmExport}
+                >
+                  ذخیره فایل
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* bottom status + hints */}
       <div data-ui className="fixed bottom-4 inset-x-0 z-[65] flex justify-center pointer-events-none px-3">
@@ -749,7 +2762,6 @@ export default function App() {
       </AnimatePresence>
 
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
-      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ToastStack toasts={toasts} />
       <div className="noise-overlay" />
     </div>

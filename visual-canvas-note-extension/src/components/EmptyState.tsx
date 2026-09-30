@@ -1,9 +1,8 @@
 import { motion } from "framer-motion";
-import { MousePointerClick, Plus, StickyNote } from "lucide-react";
+import { Plus, StickyNote } from "lucide-react";
 
 interface Props {
   onAdd: () => void;
-  onHelp: () => void;
 }
 
 function GhostNote({
@@ -44,7 +43,7 @@ function GhostNote({
   );
 }
 
-export default function EmptyState({ onAdd, onHelp }: Props) {
+export default function EmptyState({ onAdd }: Props) {
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none select-none">
       <div className="relative flex flex-col items-center text-center px-6">
@@ -94,13 +93,6 @@ export default function EmptyState({ onAdd, onHelp }: Props) {
             style={{ background: "linear-gradient(135deg,#f5a623,#e2761b)" }}
           >
             <Plus size={17} strokeWidth={2.6} /> ساخت اولین یادداشت
-          </button>
-          <button
-            onClick={onHelp}
-            className="glass flex items-center gap-2 px-5 py-3 rounded-2xl text-[13.5px] font-bold transition-transform hover:scale-[1.03] active:scale-95 cursor-pointer"
-            style={{ color: "var(--text)" }}
-          >
-            <MousePointerClick size={16} style={{ color: "var(--accent)" }} /> راهنمای نصب افزونه
           </button>
         </motion.div>
 

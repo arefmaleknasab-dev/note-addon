@@ -2,18 +2,24 @@ import type { Note, PendingNote, ViewState } from "../types";
 import { PALETTE, uid } from "./constants";
 
 export const DEFAULT_NOTE_W = 288;
+export const DEFAULT_NOTE_H = 190;
+export const MIN_NOTE_W = 230;
+export const MIN_NOTE_H = 130;
+export const MAX_NOTE_W = 1360;
+export const MAX_NOTE_H = 2160;
 
 export function createNote(partial: Partial<Note> = {}): Note {
   return {
     id: uid(),
+    kind: "plain",
     title: "",
     text: "",
     x: 0,
     y: 0,
     width: DEFAULT_NOTE_W,
+    height: DEFAULT_NOTE_H,
     color: "slate",
     createdAt: Date.now(),
-    source: null,
     ...partial,
   };
 }
@@ -21,11 +27,12 @@ export function createNote(partial: Partial<Note> = {}): Note {
 export function noteFromPending(p: PendingNote, index: number): Note {
   const accent = PALETTE[(index % (PALETTE.length - 1)) + 1]; // skip slate, colorful web notes
   return createNote({
-    title: p.pageTitle ? truncate(p.pageTitle, 64) : "از صفحه‌ی وب",
+    kind: p.html ? "html" : "plain",
+    title: "",
     text: p.text,
+    html: p.html,
     color: accent.id,
     createdAt: p.createdAt || Date.now(),
-    source: p.url ? { title: p.pageTitle, url: p.url } : null,
   });
 }
 

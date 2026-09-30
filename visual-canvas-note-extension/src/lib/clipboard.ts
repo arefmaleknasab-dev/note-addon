@@ -1,5 +1,6 @@
 import type { Note } from "../types";
 import { formatMany, formatNote } from "./notes";
+import { sanitizeHtml } from "./richText";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -45,8 +46,23 @@ export async function writeClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
 }
 
+export async function writeClipboardRich(text: string, html?: string): Promise<void> {
+  ensureFocus();
+  const safeHtml = sanitizeHtml(html);
+  if (safeHtml && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([text], { type: "text/plain" }),
+        "text/html": new Blob([safeHtml], { type: "text/html" }),
+      }),
+    ]);
+    return;
+  }
+  await writeClipboard(text);
+}
+
 export async function copySingle(note: Note): Promise<void> {
-  await writeClipboard(formatNote(note));
+  await writeClipboardRich(formatNote(note), note.html);
 }
 
 export async function copyCombined(notes: Note[]): Promise<void> {

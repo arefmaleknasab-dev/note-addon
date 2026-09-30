@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.pkg-tmp/
+visual-canvas-note-extension/public/persian-notes-extension.zip

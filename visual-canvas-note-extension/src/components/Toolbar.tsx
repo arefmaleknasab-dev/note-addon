@@ -2,14 +2,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ClipboardCopy,
   Copy,
-  Download,
-  HelpCircle,
   Maximize,
   Moon,
   Plus,
+  Redo2,
   Sparkles,
   Sun,
   Trash2,
+  Undo2,
   X,
   ZoomIn,
   ZoomOut,
@@ -28,7 +28,8 @@ interface Props {
   onResetView: () => void;
   onAdd: () => void;
   onToggleTheme: () => void;
-  onHelp: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onCopySeparate: () => void;
   onCopyCombined: () => void;
   onDeleteSelected: () => void;
@@ -110,23 +111,21 @@ export default function Toolbar(p: Props) {
 
         <Divider />
 
+        <TButton title="فلش قبل / بازگردانی حذف (Ctrl+Z)" onClick={p.onUndo}>
+          <Undo2 size={16} />
+        </TButton>
+        <TButton title="فلش بعد / انجام دوباره" onClick={p.onRedo}>
+          <Redo2 size={16} />
+        </TButton>
+
+        <Divider />
+
         <TButton title="یادداشت جدید (دابل‌کلیک روی بوم)" onClick={p.onAdd} accent>
           <Plus size={18} />
         </TButton>
         <TButton title={p.theme === "dark" ? "حالت روشن" : "حالت تاریک"} onClick={p.onToggleTheme}>
           {p.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </TButton>
-        <TButton title="راهنما و نصب افزونه" onClick={p.onHelp}>
-          <HelpCircle size={16} />
-        </TButton>
-        <a
-          href="persian-notes-extension.zip"
-          download
-          title="دانلود فایل نصب افزونه"
-          className="icon-btn w-9 h-9"
-        >
-          <Download size={16} />
-        </a>
 
         {/* selection actions */}
         <AnimatePresence>
